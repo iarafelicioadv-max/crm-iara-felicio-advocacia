@@ -1,13 +1,15 @@
 {
   "name": "crm-escritorio",
   "version": "1.0.0",
-  "description": "CRM jurídico simples para escritórios de advocacia",
+  "description": "CRM juridico simples para escritorios de advocacia",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
     "express": "^4.19.2",
-    "multer": "^2.2.0"
+    "multer": "^2.2.0",
+    "bcryptjs": "^2.4.3",
+    "cookie-session": "^2.1.0"
   }
 }

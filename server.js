@@ -2,15 +2,26 @@ const express = require('express');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
+const bcrypt = require('bcryptjs');
+const cookieSession = require('cookie-session');
 const { load, save, nextId } = require('./db');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(express.json());
-app.use(express.static(path.join(__dirname, 'public')));
 
-const uploadsDir = path.join(__dirname, 'public', 'uploads');
+app.use(
+  cookieSession({
+    name: 'crmSession',
+    secret: process.env.SESSION_SECRET || 'troque-este-segredo-em-producao-dev',
+    maxAge: 30 * 24 * 60 * 60 * 1000,
+    sameSite: 'lax',
+  })
+);
+
+const uploadsDir = path.join(__dirname, 'uploads_privados');
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 
 const storage = multer.diskStorage({
@@ -22,7 +33,118 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage });
 
-// ---------- helpers ----------
+function ensureAdminSeed() {
+  const db = load();
+  if (!db.usuarios) db.usuarios = [];
+  if (db.usuarios.length === 0) {
+    const email = process.env.ADMIN_EMAIL || 'iarafelicio.adv@gmail.com';
+    const senhaInicial = process.env.ADMIN_INITIAL_PASSWORD || crypto.randomBytes(6).toString('hex');
+    const admin = {
+      id: nextId(db.usuarios),
+      nome: 'Iara Vieira Felício',
+      email,
+      role: 'admin',
+      senhaHash: bcrypt.hashSync(senhaInicial, 10),
+      precisaTrocarSenha: true,
+      criadoEm: new Date().toISOString(),
+    };
+    db.usuarios.push(admin);
+    save(db);
+    console.log('=== Usuário admin inicial criado ===');
+    console.log('E-mail:', email);
+    if (!process.env.ADMIN_INITIAL_PASSWORD) console.log('Senha temporária:', senhaInicial);
+    console.log('=====================================');
+  }
+}
+ensureAdminSeed();
+
+function requireAuth(req, res, next) {
+  if (req.session && req.session.userId) return next();
+  res.status(401).json({ erro: 'não autenticado' });
+}
+function requireAdmin(req, res, next) {
+  if (req.session && req.session.role === 'admin') return next();
+  res.status(403).json({ erro: 'apenas administradores podem fazer isso' });
+}
+
+app.post('/api/login', (req, res) => {
+  const db = load();
+  const { email, senha } = req.body;
+  const user = (db.usuarios || []).find((u) => u.email.toLowerCase() === String(email || '').toLowerCase());
+  if (!user || !bcrypt.compareSync(String(senha || ''), user.senhaHash)) {
+    return res.status(401).json({ erro: 'e-mail ou senha inválidos' });
+  }
+  req.session.userId = user.id;
+  req.session.role = user.role;
+  res.json({ ok: true, nome: user.nome, role: user.role, precisaTrocarSenha: !!user.precisaTrocarSenha });
+});
+
+app.post('/api/logout', (req, res) => {
+  req.session = null;
+  res.json({ ok: true });
+});
+
+app.use('/api', requireAuth);
+
+app.get('/api/me', (req, res) => {
+  const db = load();
+  const user = (db.usuarios || []).find((u) => u.id === req.session.userId);
+  if (!user) return res.status(401).json({ erro: 'sessão inválida' });
+  res.json({ id: user.id, nome: user.nome, email: user.email, role: user.role, precisaTrocarSenha: !!user.precisaTrocarSenha });
+});
+
+app.post('/api/trocar-senha', (req, res) => {
+  const db = load();
+  const user = (db.usuarios || []).find((u) => u.id === req.session.userId);
+  const { senhaAtual, novaSenha } = req.body;
+  if (!user || !bcrypt.compareSync(String(senhaAtual || ''), user.senhaHash)) {
+    return res.status(400).json({ erro: 'senha atual incorreta' });
+  }
+  if (!novaSenha || novaSenha.length < 8) {
+    return res.status(400).json({ erro: 'a nova senha precisa ter pelo menos 8 caracteres' });
+  }
+  user.senhaHash = bcrypt.hashSync(novaSenha, 10);
+  user.precisaTrocarSenha = false;
+  save(db);
+  res.json({ ok: true });
+});
+
+app.get('/api/usuarios', requireAdmin, (req, res) => {
+  const db = load();
+  res.json((db.usuarios || []).map((u) => ({ id: u.id, nome: u.nome, email: u.email, role: u.role, precisaTrocarSenha: !!u.precisaTrocarSenha })));
+});
+
+app.post('/api/usuarios', requireAdmin, (req, res) => {
+  const db = load();
+  if (!db.usuarios) db.usuarios = [];
+  const { nome, email, senha, role } = req.body;
+  if (!nome || !email || !senha) return res.status(400).json({ erro: 'nome, e-mail e senha são obrigatórios' });
+  if (db.usuarios.find((u) => u.email.toLowerCase() === String(email).toLowerCase())) {
+    return res.status(400).json({ erro: 'já existe um usuário com esse e-mail' });
+  }
+  const novo = {
+    id: nextId(db.usuarios),
+    nome,
+    email,
+    role: role === 'admin' ? 'admin' : 'membro',
+    senhaHash: bcrypt.hashSync(senha, 10),
+    precisaTrocarSenha: true,
+    criadoEm: new Date().toISOString(),
+  };
+  db.usuarios.push(novo);
+  save(db);
+  res.status(201).json({ id: novo.id });
+});
+
+app.delete('/api/usuarios/:id', requireAdmin, (req, res) => {
+  const db = load();
+  if ((db.usuarios || []).length <= 1) return res.status(400).json({ erro: 'não é possível remover o único usuário do sistema' });
+  if (Number(req.params.id) === req.session.userId) return res.status(400).json({ erro: 'você não pode remover seu próprio usuário' });
+  db.usuarios = db.usuarios.filter((u) => u.id !== Number(req.params.id));
+  save(db);
+  res.json({ removido: true });
+});
+
 function crud(resource) {
   const base = `/api/${resource}`;
 
@@ -66,7 +188,6 @@ function crud(resource) {
 
 ['clientes', 'processos', 'eventos'].forEach(crud);
 
-// ---------- documentos (com upload de arquivo) ----------
 app.get('/api/documentos', (req, res) => {
   const db = load();
   res.json(db.documentos);
@@ -93,7 +214,7 @@ app.delete('/api/documentos/:id', (req, res) => {
   const db = load();
   const doc = db.documentos.find((d) => d.id === Number(req.params.id));
   if (doc && doc.arquivo) {
-    const filePath = path.join(__dirname, 'public', doc.arquivo);
+    const filePath = path.join(uploadsDir, path.basename(doc.arquivo));
     if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
   }
   db.documentos = db.documentos.filter((d) => d.id !== Number(req.params.id));
@@ -101,13 +222,12 @@ app.delete('/api/documentos/:id', (req, res) => {
   res.json({ removido: true });
 });
 
-// ---------- dashboard ----------
 app.get('/api/dashboard', (req, res) => {
   const db = load();
   const totalProcessos = db.processos.length;
   const liminaresDeferidas = db.processos.filter((p) => p.liminarDeferida).length;
   const cpdsAtivos = db.processos.filter((p) => p.tipo === 'CPD' && p.status !== 'Concluído').length;
-  const acoesPendentes = db.processos.filter((p) => p.status === 'Pendente' || p.status === 'Aguardando').length;
+  const acoesPendentes = db.processos.filter((p) => p.status === 'Aguardando').length;
 
   const recentes = [...db.processos]
     .sort((a, b) => new Date(b.criadoEm) - new Date(a.criadoEm))
@@ -126,6 +246,15 @@ app.get('/api/dashboard', (req, res) => {
     processosRecentes: recentes,
   });
 });
+
+app.get('/uploads/:filename', requireAuth, (req, res) => {
+  const safe = path.basename(req.params.filename);
+  const filePath = path.join(uploadsDir, safe);
+  if (!fs.existsSync(filePath)) return res.status(404).send('Arquivo não encontrado.');
+  res.sendFile(filePath);
+});
+
+app.use(express.static(path.join(__dirname, 'public')));
 
 app.listen(PORT, () => {
   console.log(`CRM rodando em http://localhost:${PORT}`);

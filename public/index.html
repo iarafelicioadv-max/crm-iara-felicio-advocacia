@@ -26,7 +26,13 @@
       <button class="nav-item" data-view="clientes">👥 Clientes</button>
       <button class="nav-item" data-view="documentos">📄 Documentos</button>
       <button class="nav-item" data-view="relatorios">📈 Relatórios</button>
+      <button class="nav-item" id="nav-usuarios" data-view="usuarios" style="display:none;">🔑 Usuários</button>
     </nav>
+    <div class="sidebar-footer">
+      <div id="usuario-logado" class="usuario-logado"></div>
+      <button class="nav-item" onclick="abrirModalTrocarSenha()">🔒 Trocar minha senha</button>
+      <button class="nav-item" onclick="sair()">↩ Sair</button>
+    </div>
   </aside>
 
   <main class="content">
@@ -110,6 +116,19 @@
         <div class="panel"><h3>Processos por Status</h3><canvas id="chart-status"></canvas></div>
         <div class="panel"><h3>Processos por Área</h3><canvas id="chart-area"></canvas></div>
       </div>
+    </section>
+
+    <!-- USUARIOS -->
+    <section id="view-usuarios" class="view">
+      <div class="view-header">
+        <h2>Usuários da equipe</h2>
+        <button class="btn-primary" onclick="abrirModalUsuario()">+ Novo Usuário</button>
+      </div>
+      <div class="notice">Cada pessoa da equipe deve ter seu próprio login. A senha definida aqui é temporária — a pessoa vai precisar trocá-la no primeiro acesso.</div>
+      <table class="table" id="tabela-usuarios">
+        <thead><tr><th>Nome</th><th>E-mail</th><th>Perfil</th><th>Ações</th></tr></thead>
+        <tbody></tbody>
+      </table>
     </section>
 
   </main>

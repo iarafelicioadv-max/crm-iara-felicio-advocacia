@@ -13,6 +13,7 @@ const EMPTY_DB = {
   processos: [],
   eventos: [],
   documentos: [],
+  usuarios: [],
 };
 
 function load() {

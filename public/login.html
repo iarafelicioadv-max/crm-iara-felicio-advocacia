@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Entrar — CRM Iara Vieira Felício Advocacia</title>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css" />
+<style>
+  body { display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+  .login-box {
+    background: var(--card-bg); border: 1px solid var(--border); border-radius: 14px;
+    padding: 40px 36px; width: 380px; max-width: 90vw;
+  }
+  .login-badge {
+    width: 60px; height: 60px; margin: 0 auto 18px; background: var(--creme); border-radius: 14px;
+    display: flex; align-items: center; justify-content: center; font-family: 'Playfair Display', serif;
+    font-size: 22px; color: var(--bordo-escuro);
+  }
+  .login-box h2 { text-align: center; margin-bottom: 4px; }
+  .login-sub { text-align: center; color: var(--text-light); font-size: 13px; margin-bottom: 24px; }
+  .login-box label { display: block; font-size: 13px; color: var(--text-light); margin: 14px 0 5px; }
+  .login-box input {
+    width: 100%; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px;
+  }
+  .login-box button {
+    width: 100%; margin-top: 22px; background: var(--bordo); color: #fff; border: none; padding: 11px;
+    border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer;
+  }
+  .login-box button:hover { background: var(--bordo-claro); }
+  .erro { color: #a33; font-size: 13px; margin-top: 12px; text-align: center; display: none; }
+</style>
+</head>
+<body>
+
+<div class="login-box">
+  <div class="login-badge serif">IVF</div>
+  <h2 class="serif" style="text-align:center;">CRM Iara Vieira Felício</h2>
+  <div class="login-sub">Advocacia &amp; Consultoria Jurídica</div>
+
+  <form id="form-login">
+    <label>E-mail</label>
+    <input type="email" id="email" required autofocus />
+    <label>Senha</label>
+    <input type="password" id="senha" required />
+    <button type="submit">Entrar</button>
+    <div class="erro" id="erro"></div>
+  </form>
+</div>
+
+<script>
+document.getElementById('form-login').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const email = document.getElementById('email').value;
+  const senha = document.getElementById('senha').value;
+  const erroEl = document.getElementById('erro');
+  erroEl.style.display = 'none';
+  try {
+    const res = await fetch('/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, senha }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      erroEl.textContent = data.erro || 'Não foi possível entrar.';
+      erroEl.style.display = 'block';
+      return;
+    }
+    window.location.href = '/index.html';
+  } catch (err) {
+    erroEl.textContent = 'Erro de conexão. Tente novamente.';
+    erroEl.style.display = 'block';
+  }
+});
+</script>
+</body>
+</html>

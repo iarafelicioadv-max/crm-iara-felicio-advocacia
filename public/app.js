@@ -4,7 +4,8 @@ const TIPOS_PROCESSO = ['Ação Ordinária', 'CPD', 'Mandado de Segurança', 'Ex
 const TIPOS_EVENTO = ['Audiência', 'Prazo', 'Reunião', 'Perícia', 'Outro'];
 const TIPOS_DOC = ['Petição', 'Procuração', 'Contrato', 'Documento Pessoal', 'Prova', 'Outro'];
 
-let state = { clientes: [], processos: [], eventos: [], documentos: [] };
+let state = { clientes: [], processos: [], eventos: [], documentos: [], usuarios: [] };
+let usuarioAtual = null;
 
 // ---------- API helpers ----------
 async function api(path, opts = {}) {
@@ -12,20 +13,46 @@ async function api(path, opts = {}) {
     headers: opts.body && !(opts.body instanceof FormData) ? { 'Content-Type': 'application/json' } : undefined,
     ...opts,
   });
-  if (!res.ok) throw new Error('Erro na API: ' + res.status);
+  if (res.status === 401) {
+    window.location.href = '/login.html';
+    throw new Error('não autenticado');
+  }
+  if (!res.ok) {
+    const dados = await res.json().catch(() => ({}));
+    throw new Error(dados.erro || 'Erro na API: ' + res.status);
+  }
   return res.json();
 }
 
 async function carregarTudo() {
-  const [clientes, processos, eventos, documentos, dashboard] = await Promise.all([
+  const chamadas = [
     api('/api/clientes'),
     api('/api/processos'),
     api('/api/eventos'),
     api('/api/documentos'),
     api('/api/dashboard'),
-  ]);
-  state = { clientes, processos, eventos, documentos, dashboard };
+  ];
+  if (usuarioAtual && usuarioAtual.role === 'admin') chamadas.push(api('/api/usuarios'));
+  const [clientes, processos, eventos, documentos, dashboard, usuarios] = await Promise.all(chamadas);
+  state = { clientes, processos, eventos, documentos, dashboard, usuarios: usuarios || [] };
   renderAll();
+}
+
+async function iniciar() {
+  try {
+    usuarioAtual = await api('/api/me');
+  } catch (e) {
+    return;
+  }
+  document.getElementById('usuario-logado').textContent = usuarioAtual.nome + ' (' + (usuarioAtual.role === 'admin' ? 'administradora' : 'membro') + ')';
+  if (usuarioAtual.role === 'admin') document.getElementById('nav-usuarios').style.display = 'block';
+  await carregarTudo();
+  if (usuarioAtual.precisaTrocarSenha) abrirModalTrocarSenha(true);
+}
+
+async function sair() {
+  await fetch('/api/logout', { method: 'POST' });
+  window.location.href = '/login.html';
 }
 
 function nomeCliente(id) {
@@ -41,9 +68,9 @@ function classStatus(s) {
 }
 
 // ---------- Navegação ----------
-document.querySelectorAll('.nav-item').forEach((btn) => {
+document.querySelectorAll('.nav-item[data-view]').forEach((btn) => {
   btn.addEventListener('click', () => {
-    document.querySelectorAll('.nav-item').forEach((b) => b.classList.remove('active'));
+    document.querySelectorAll('.nav-item[data-view]').forEach((b) => b.classList.remove('active'));
     document.querySelectorAll('.view').forEach((v) => v.classList.remove('active'));
     btn.classList.add('active');
     document.getElementById('view-' + btn.dataset.view).classList.add('active');
@@ -59,6 +86,7 @@ function renderAll() {
   renderClientes();
   renderDocumentos();
   renderRelatorios();
+  if (usuarioAtual && usuarioAtual.role === 'admin') renderUsuarios();
 }
 
 function renderDashboard() {
@@ -135,7 +163,7 @@ function renderEventos() {
   const ordenados = [...state.eventos].sort((a, b) => new Date(a.data) - new Date(b.data));
   tbody.innerHTML = ordenados.map((e) => `
     <tr>
-      <td>${e.data ? new Date(e.data).toLocaleDateString('pt-BR') : '—'}</td>
+      <td>${e.data ? new Date(e.data + 'T00:00:00').toLocaleDateString('pt-BR') : '—'}</td>
       <td>${e.titulo || '—'}</td>
       <td>${e.tipo || '—'}</td>
       <td>${e.processoId ? nomeProcesso(e.processoId) : '—'}</td>
@@ -187,9 +215,21 @@ function renderRelatorios() {
   });
   charts.area = new Chart(document.getElementById('chart-area'), {
     type: 'bar',
-    data: { labels: AREAS, datasets: [{ data: porArea, backgroundColor: '#5c1023' }] },
+    data: { labels: AREAS, datasets: [{ data: porArea, backgroundColor: '#5a4636' }] },
     options: { plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } } } },
   });
+}
+
+function renderUsuarios() {
+  const tbody = document.querySelector('#tabela-usuarios tbody');
+  if (!tbody) return;
+  tbody.innerHTML = state.usuarios.map((u) => `
+    <tr>
+      <td>${u.nome}</td>
+      <td>${u.email}</td>
+      <td>${u.role === 'admin' ? 'Administradora' : 'Membro'}${u.precisaTrocarSenha ? ' <span class="badge status-Aguardando">senha temporária</span>' : ''}</td>
+      <td><button class="btn-icon" title="Remover" onclick="excluirUsuario(${u.id})">🗑️</button></td>
+    </tr>`).join('') || '<tr><td colspan="4">Nenhum usuário cadastrado ainda.</td></tr>';
 }
 
 // ---------- Exclusão ----------
@@ -254,7 +294,7 @@ function abrirModalProcesso(id) {
   modalBox.innerHTML = `
     <h3>${id ? 'Editar' : 'Novo'} Processo</h3>
     <label>Nome / Número do processo</label><input id="f-nome" value="${p.nome || ''}" />
-    <label>Cliente</label><select id="f-cliente">${opcoesClientes(p.clienteId)}</select>
+    <label>Cliente</label><select id="f-cliente"><option value="">— nenhum —</option>${opcoesClientes(p.clienteId)}</select>
     <label>Área</label><select id="f-area">${opcoesLista(AREAS, p.area)}</select>
     <label>Tipo</label><select id="f-tipo">${opcoesLista(TIPOS_PROCESSO, p.tipo)}</select>
     <label>Status</label><select id="f-status">${opcoesLista(STATUSES, p.status || 'Novo')}</select>
@@ -336,9 +376,89 @@ async function salvarDocumento() {
   fd.append('processoId', document.getElementById('f-processo').value);
   const arquivo = document.getElementById('f-arquivo').files[0];
   if (arquivo) fd.append('arquivo', arquivo);
-  await fetch('/api/documentos', { method: 'POST', body: fd });
+  const res = await fetch('/api/documentos', { method: 'POST', body: fd });
+  if (res.status === 401) { window.location.href = '/login.html'; return; }
   fecharModal();
   await carregarTudo();
 }
 
-carregarTudo();
+// ---------- usuários (somente admin) ----------
+function abrirModalUsuario() {
+  modalBox.innerHTML = `
+    <h3>Novo Usuário</h3>
+    <label>Nome completo</label><input id="f-nome" />
+    <label>E-mail</label><input type="email" id="f-email" />
+    <label>Senha temporária</label><input type="text" id="f-senha" placeholder="Defina uma senha para o primeiro acesso" />
+    <label>Perfil</label>
+    <select id="f-role">
+      <option value="membro">Membro da equipe</option>
+      <option value="admin">Administradora</option>
+    </select>
+    <div class="modal-actions">
+      <button class="btn-secondary" onclick="fecharModal()">Cancelar</button>
+      <button class="btn-primary" onclick="salvarUsuario()">Salvar</button>
+    </div>
+    <div class="erro" id="erro-usuario" style="display:none;color:#a33;font-size:13px;margin-top:10px;"></div>`;
+  overlay.classList.add('active');
+}
+
+async function salvarUsuario() {
+  const body = {
+    nome: document.getElementById('f-nome').value,
+    email: document.getElementById('f-email').value,
+    senha: document.getElementById('f-senha').value,
+    role: document.getElementById('f-role').value,
+  };
+  try {
+    await api('/api/usuarios', { method: 'POST', body: JSON.stringify(body) });
+    fecharModal();
+    await carregarTudo();
+  } catch (e) {
+    const erroEl = document.getElementById('erro-usuario');
+    erroEl.textContent = e.message;
+    erroEl.style.display = 'block';
+  }
+}
+
+async function excluirUsuario(id) {
+  if (!confirm('Remover este usuário? A pessoa perderá o acesso imediatamente.')) return;
+  try {
+    await api(`/api/usuarios/${id}`, { method: 'DELETE' });
+    await carregarTudo();
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
+// ---------- trocar senha ----------
+function abrirModalTrocarSenha(obrigatorio) {
+  modalBox.innerHTML = `
+    <h3>${obrigatorio ? 'Defina sua senha' : 'Trocar minha senha'}</h3>
+    ${obrigatorio ? '<div class="notice">Por segurança, defina uma senha nova antes de continuar.</div>' : ''}
+    <label>Senha atual</label><input type="password" id="f-senha-atual" />
+    <label>Nova senha (mínimo 8 caracteres)</label><input type="password" id="f-nova-senha" />
+    <div class="modal-actions">
+      ${obrigatorio ? '' : '<button class="btn-secondary" onclick="fecharModal()">Cancelar</button>'}
+      <button class="btn-primary" onclick="salvarTrocarSenha(${!!obrigatorio})">Salvar</button>
+    </div>
+    <div class="erro" id="erro-senha" style="display:none;color:#a33;font-size:13px;margin-top:10px;"></div>`;
+  overlay.classList.add('active');
+}
+
+async function salvarTrocarSenha(obrigatorio) {
+  const body = {
+    senhaAtual: document.getElementById('f-senha-atual').value,
+    novaSenha: document.getElementById('f-nova-senha').value,
+  };
+  try {
+    await api('/api/trocar-senha', { method: 'POST', body: JSON.stringify(body) });
+    fecharModal();
+    if (obrigatorio) usuarioAtual.precisaTrocarSenha = false;
+  } catch (e) {
+    const erroEl = document.getElementById('erro-senha');
+    erroEl.textContent = e.message;
+    erroEl.style.display = 'block';
+  }
+}
+
+iniciar();
