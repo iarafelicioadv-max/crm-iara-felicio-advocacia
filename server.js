@@ -341,7 +341,14 @@ app.get('/api/dashboard', (req, res) => {
   const db = load();
   const totalProcessos = db.processos.length;
   const liminaresDeferidas = db.processos.filter((p) => p.liminarDeferida).length;
-  const cpdsAtivos = db.processos.filter((p) => p.tipo === 'CPD' && p.status !== 'Concluído').length;
+  const hoje = new Date();
+  const daqui7dias = new Date();
+  daqui7dias.setDate(hoje.getDate() + 7);
+  const prazosSemana = db.eventos.filter((e) => {
+    if (!e.data) return false;
+    const dataEvento = new Date(e.data + 'T00:00:00');
+    return dataEvento >= new Date(hoje.toDateString()) && dataEvento <= daqui7dias;
+  }).length;
   const acoesPendentes = db.processos.filter((p) => p.status === 'Aguardando').length;
 
   const recentes = [...db.processos]
@@ -355,7 +362,7 @@ app.get('/api/dashboard', (req, res) => {
   res.json({
     totalProcessos,
     liminaresDeferidas,
-    cpdsAtivos,
+    prazosSemana,
     acoesPendentes,
     totalClientes: db.clientes.length,
     processosRecentes: recentes,

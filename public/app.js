@@ -93,7 +93,7 @@ function renderDashboard() {
   const d = state.dashboard;
   document.getElementById('stat-total').textContent = d.totalProcessos;
   document.getElementById('stat-liminares').textContent = d.liminaresDeferidas;
-  document.getElementById('stat-cpds').textContent = d.cpdsAtivos;
+  document.getElementById('stat-prazos').textContent = d.prazosSemana;
   document.getElementById('stat-pendentes').textContent = d.acoesPendentes;
 
   const tbody = document.querySelector('#tabela-recentes tbody');
