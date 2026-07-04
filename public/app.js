@@ -146,7 +146,7 @@ function renderProcessos() {
   const tbody = document.querySelector('#tabela-processos tbody');
   tbody.innerHTML = state.processos.map((p) => `
     <tr>
-      <td>${p.nome || '—'}</td>
+      <td>${p.nome || '—'}${p.numeroProcesso ? '<br><small style="color:var(--text-light)">' + p.numeroProcesso + '</small>' : ''}</td>
       <td>${nomeCliente(p.clienteId)}</td>
       <td>${p.area || '—'}</td>
       <td><span class="badge ${classStatus(p.status)}">${p.status || '—'}</span></td>

@@ -84,6 +84,121 @@ app.post('/api/logout', (req, res) => {
   res.json({ ok: true });
 });
 
+// ---------- sincronização automática (Google Drive) ----------
+function requireSyncKey(req, res, next) {
+  const chave = req.headers['x-sync-key'];
+  if (!process.env.SYNC_API_KEY || chave !== process.env.SYNC_API_KEY) {
+    return res.status(401).json({ erro: 'chave de sincronização inválida' });
+  }
+  next();
+}
+
+function mapStatusPlanilha(statusTexto) {
+  const s = String(statusTexto || '').toLowerCase();
+  if (s.includes('conclu')) return 'Concluído';
+  if (s.includes('sentença') || s.includes('sentenca') || s.includes('aguard')) return 'Aguardando';
+  if (s.includes('inicial') || s.includes('novo')) return 'Novo';
+  return 'Em Andamento';
+}
+
+function mapAreaPlanilha(acaoTexto) {
+  const a = String(acaoTexto || '').toLowerCase();
+  if (a.includes('previdenci') || a.includes('inss') || a.includes('benefício')) return 'Previdenciário';
+  if (a.includes('trabalh')) return 'Trabalhista';
+  if (a.includes('família') || a.includes('familia') || a.includes('divórcio') || a.includes('divorcio')) return 'Família';
+  if (a.includes('crime') || a.includes('criminal')) return 'Criminal';
+  if (a.includes('tribut')) return 'Tributário';
+  return 'Cível';
+}
+
+app.post('/api/sync/clientes-processos', requireSyncKey, (req, res) => {
+  const db = load();
+  const registros = Array.isArray(req.body.registros) ? req.body.registros : [];
+  let clientesCriados = 0;
+  let clientesAtualizados = 0;
+  let processosCriados = 0;
+  let processosAtualizados = 0;
+
+  registros.forEach((r) => {
+    if (!r.cliente) return;
+    let cliente = db.clientes.find((c) => c.nome && c.nome.trim().toLowerCase() === String(r.cliente).trim().toLowerCase());
+    if (!cliente) {
+      cliente = { id: nextId(db.clientes), nome: r.cliente, criadoEm: new Date().toISOString() };
+      db.clientes.push(cliente);
+      clientesCriados++;
+    } else {
+      clientesAtualizados++;
+    }
+
+    if (r.numero || r.acao) {
+      let processo = null;
+      if (r.numero) processo = db.processos.find((p) => p.numeroProcesso === r.numero);
+      if (!processo && r.acao) processo = db.processos.find((p) => p.nome === r.acao && p.clienteId === cliente.id);
+
+      const dadosProcesso = {
+        nome: r.acao || r.numero || 'Processo',
+        numeroProcesso: r.numero || null,
+        clienteId: cliente.id,
+        area: mapAreaPlanilha(r.acao),
+        tipo: 'Ação Ordinária',
+        status: mapStatusPlanilha(r.status),
+        pastaDocumentos: r.pastaDocumentos || null,
+      };
+
+      if (!processo) {
+        processo = { id: nextId(db.processos), criadoEm: new Date().toISOString(), ...dadosProcesso };
+        db.processos.push(processo);
+        processosCriados++;
+      } else {
+        Object.assign(processo, dadosProcesso);
+        processosAtualizados++;
+      }
+    }
+  });
+
+  save(db);
+  res.json({ clientesCriados, clientesAtualizados, processosCriados, processosAtualizados });
+});
+
+app.post('/api/sync/documento', requireSyncKey, (req, res) => {
+  const db = load();
+  const { pastaDocumentos, nomeOriginal, tipo, conteudoBase64 } = req.body;
+  if (!pastaDocumentos || !nomeOriginal || !conteudoBase64) {
+    return res.status(400).json({ erro: 'pastaDocumentos, nomeOriginal e conteudoBase64 são obrigatórios' });
+  }
+
+  const processo = db.processos.find((p) => p.pastaDocumentos && p.pastaDocumentos.trim().toLowerCase() === String(pastaDocumentos).trim().toLowerCase());
+  if (!processo) {
+    return res.status(404).json({ erro: 'nenhum processo vinculado a essa pasta de documentos' });
+  }
+
+  const jaExiste = db.documentos.find((d) => d.processoId === processo.id && d.nomeOriginal === nomeOriginal);
+  if (jaExiste) {
+    return res.json({ ignorado: true, motivo: 'documento já importado anteriormente' });
+  }
+
+  const buffer = Buffer.from(conteudoBase64, 'base64');
+  const unique = Date.now() + '-' + Math.round(Math.random() * 1e9);
+  const ext = path.extname(nomeOriginal);
+  const nomeArquivo = unique + ext;
+  fs.writeFileSync(path.join(uploadsDir, nomeArquivo), buffer);
+
+  const item = {
+    id: nextId(db.documentos),
+    nome: nomeOriginal,
+    clienteId: processo.clienteId,
+    processoId: processo.id,
+    tipo: tipo || 'Outro',
+    arquivo: '/uploads/' + nomeArquivo,
+    nomeOriginal,
+    criadoEm: new Date().toISOString(),
+    origem: 'sync-drive',
+  };
+  db.documentos.push(item);
+  save(db);
+  res.status(201).json({ id: item.id });
+});
+
 app.use('/api', requireAuth);
 
 app.get('/api/me', (req, res) => {
