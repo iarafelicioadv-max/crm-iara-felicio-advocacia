@@ -1,16 +1,15 @@
 const express = require('express');
 const multer = require('multer');
 const path = require('path');
-const fs = require('fs');
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const cookieSession = require('cookie-session');
-const { load, save, nextId } = require('./db');
+const { load, save, nextId, salvarArquivo, buscarArquivo, removerArquivo } = require('./db');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-app.use(express.json());
+app.use(express.json({ limit: '15mb' }));
 
 app.use(
   cookieSession({
@@ -21,20 +20,10 @@ app.use(
   })
 );
 
-const uploadsDir = path.join(__dirname, 'uploads_privados');
-if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024 } });
 
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, uploadsDir),
-  filename: (req, file, cb) => {
-    const unique = Date.now() + '-' + Math.round(Math.random() * 1e9);
-    cb(null, unique + path.extname(file.originalname));
-  },
-});
-const upload = multer({ storage });
-
-function ensureAdminSeed() {
-  const db = load();
+async function ensureAdminSeed() {
+  const db = await load();
   if (!db.usuarios) db.usuarios = [];
   if (db.usuarios.length === 0) {
     const email = process.env.ADMIN_EMAIL || 'iarafelicio.adv@gmail.com';
@@ -49,14 +38,13 @@ function ensureAdminSeed() {
       criadoEm: new Date().toISOString(),
     };
     db.usuarios.push(admin);
-    save(db);
+    await save(db);
     console.log('=== Usuário admin inicial criado ===');
     console.log('E-mail:', email);
     if (!process.env.ADMIN_INITIAL_PASSWORD) console.log('Senha temporária:', senhaInicial);
     console.log('=====================================');
   }
 }
-ensureAdminSeed();
 
 function requireAuth(req, res, next) {
   if (req.session && req.session.userId) return next();
@@ -67,8 +55,8 @@ function requireAdmin(req, res, next) {
   res.status(403).json({ erro: 'apenas administradores podem fazer isso' });
 }
 
-app.post('/api/login', (req, res) => {
-  const db = load();
+app.post('/api/login', async (req, res) => {
+  const db = await load();
   const { email, senha } = req.body;
   const user = (db.usuarios || []).find((u) => u.email.toLowerCase() === String(email || '').toLowerCase());
   if (!user || !bcrypt.compareSync(String(senha || ''), user.senhaHash)) {
@@ -84,7 +72,7 @@ app.post('/api/logout', (req, res) => {
   res.json({ ok: true });
 });
 
-// ---------- sincronização automática (Google Drive) ----------
+// ---------- sincronização automática (Google Drive / Google Agenda) ----------
 function requireSyncKey(req, res, next) {
   const chave = req.headers['x-sync-key'];
   if (!process.env.SYNC_API_KEY || chave !== process.env.SYNC_API_KEY) {
@@ -111,8 +99,8 @@ function mapAreaPlanilha(acaoTexto) {
   return 'Cível';
 }
 
-app.post('/api/sync/clientes-processos', requireSyncKey, (req, res) => {
-  const db = load();
+app.post('/api/sync/clientes-processos', requireSyncKey, async (req, res) => {
+  const db = await load();
   const registros = Array.isArray(req.body.registros) ? req.body.registros : [];
   let clientesCriados = 0;
   let clientesAtualizados = 0;
@@ -156,13 +144,13 @@ app.post('/api/sync/clientes-processos', requireSyncKey, (req, res) => {
     }
   });
 
-  save(db);
+  await save(db);
   res.json({ clientesCriados, clientesAtualizados, processosCriados, processosAtualizados });
 });
 
-app.post('/api/sync/documento', requireSyncKey, (req, res) => {
-  const db = load();
-  const { pastaDocumentos, nomeOriginal, tipo, conteudoBase64 } = req.body;
+app.post('/api/sync/documento', requireSyncKey, async (req, res) => {
+  const db = await load();
+  const { pastaDocumentos, nomeOriginal, tipo, conteudoBase64, mimetype } = req.body;
   if (!pastaDocumentos || !nomeOriginal || !conteudoBase64) {
     return res.status(400).json({ erro: 'pastaDocumentos, nomeOriginal e conteudoBase64 são obrigatórios' });
   }
@@ -178,10 +166,7 @@ app.post('/api/sync/documento', requireSyncKey, (req, res) => {
   }
 
   const buffer = Buffer.from(conteudoBase64, 'base64');
-  const unique = Date.now() + '-' + Math.round(Math.random() * 1e9);
-  const ext = path.extname(nomeOriginal);
-  const nomeArquivo = unique + ext;
-  fs.writeFileSync(path.join(uploadsDir, nomeArquivo), buffer);
+  const idArquivo = await salvarArquivo(buffer, nomeOriginal, mimetype);
 
   const item = {
     id: nextId(db.documentos),
@@ -189,27 +174,67 @@ app.post('/api/sync/documento', requireSyncKey, (req, res) => {
     clienteId: processo.clienteId,
     processoId: processo.id,
     tipo: tipo || 'Outro',
-    arquivo: '/uploads/' + nomeArquivo,
+    arquivo: '/uploads/' + idArquivo,
     nomeOriginal,
     criadoEm: new Date().toISOString(),
     origem: 'sync-drive',
   };
   db.documentos.push(item);
-  save(db);
+  await save(db);
   res.status(201).json({ id: item.id });
+});
+
+// Sincroniza eventos do Google Agenda para o Calendário do CRM.
+app.post('/api/sync/calendario', requireSyncKey, async (req, res) => {
+  const db = await load();
+  const eventosGoogle = Array.isArray(req.body.eventos) ? req.body.eventos : [];
+  let criados = 0;
+  let atualizados = 0;
+
+  eventosGoogle.forEach((e) => {
+    if (!e.googleEventId || !e.data) return;
+    let evento = db.eventos.find((ev) => ev.googleEventId === e.googleEventId);
+    const dados = {
+      titulo: e.titulo || 'Compromisso',
+      data: e.data,
+      hora: e.hora || null,
+      tipo: e.tipo || 'Compromisso',
+      processoId: e.processoId || null,
+      googleEventId: e.googleEventId,
+      origem: 'google-agenda',
+    };
+    if (!evento) {
+      evento = { id: nextId(db.eventos), criadoEm: new Date().toISOString(), ...dados };
+      db.eventos.push(evento);
+      criados++;
+    } else {
+      Object.assign(evento, dados);
+      atualizados++;
+    }
+  });
+
+  // remove da lista os eventos vindos da Agenda que não vieram mais nesta sincronização
+  // (ou seja, foram apagados/cancelados no Google Agenda) — só afeta eventos com origem google-agenda.
+  if (req.body.idsAtuais && Array.isArray(req.body.idsAtuais)) {
+    const idsAtuais = new Set(req.body.idsAtuais);
+    db.eventos = db.eventos.filter((ev) => ev.origem !== 'google-agenda' || idsAtuais.has(ev.googleEventId));
+  }
+
+  await save(db);
+  res.json({ criados, atualizados });
 });
 
 app.use('/api', requireAuth);
 
-app.get('/api/me', (req, res) => {
-  const db = load();
+app.get('/api/me', async (req, res) => {
+  const db = await load();
   const user = (db.usuarios || []).find((u) => u.id === req.session.userId);
   if (!user) return res.status(401).json({ erro: 'sessão inválida' });
   res.json({ id: user.id, nome: user.nome, email: user.email, role: user.role, precisaTrocarSenha: !!user.precisaTrocarSenha });
 });
 
-app.post('/api/trocar-senha', (req, res) => {
-  const db = load();
+app.post('/api/trocar-senha', async (req, res) => {
+  const db = await load();
   const user = (db.usuarios || []).find((u) => u.id === req.session.userId);
   const { senhaAtual, novaSenha } = req.body;
   if (!user || !bcrypt.compareSync(String(senhaAtual || ''), user.senhaHash)) {
@@ -220,17 +245,17 @@ app.post('/api/trocar-senha', (req, res) => {
   }
   user.senhaHash = bcrypt.hashSync(novaSenha, 10);
   user.precisaTrocarSenha = false;
-  save(db);
+  await save(db);
   res.json({ ok: true });
 });
 
-app.get('/api/usuarios', requireAdmin, (req, res) => {
-  const db = load();
+app.get('/api/usuarios', requireAdmin, async (req, res) => {
+  const db = await load();
   res.json((db.usuarios || []).map((u) => ({ id: u.id, nome: u.nome, email: u.email, role: u.role, precisaTrocarSenha: !!u.precisaTrocarSenha })));
 });
 
-app.post('/api/usuarios', requireAdmin, (req, res) => {
-  const db = load();
+app.post('/api/usuarios', requireAdmin, async (req, res) => {
+  const db = await load();
   if (!db.usuarios) db.usuarios = [];
   const { nome, email, senha, role } = req.body;
   if (!nome || !email || !senha) return res.status(400).json({ erro: 'nome, e-mail e senha são obrigatórios' });
@@ -247,98 +272,105 @@ app.post('/api/usuarios', requireAdmin, (req, res) => {
     criadoEm: new Date().toISOString(),
   };
   db.usuarios.push(novo);
-  save(db);
+  await save(db);
   res.status(201).json({ id: novo.id });
 });
 
-app.delete('/api/usuarios/:id', requireAdmin, (req, res) => {
-  const db = load();
+app.delete('/api/usuarios/:id', requireAdmin, async (req, res) => {
+  const db = await load();
   if ((db.usuarios || []).length <= 1) return res.status(400).json({ erro: 'não é possível remover o único usuário do sistema' });
   if (Number(req.params.id) === req.session.userId) return res.status(400).json({ erro: 'você não pode remover seu próprio usuário' });
   db.usuarios = db.usuarios.filter((u) => u.id !== Number(req.params.id));
-  save(db);
+  await save(db);
   res.json({ removido: true });
 });
 
 function crud(resource) {
   const base = `/api/${resource}`;
 
-  app.get(base, (req, res) => {
-    const db = load();
+  app.get(base, async (req, res) => {
+    const db = await load();
     res.json(db[resource]);
   });
 
-  app.get(`${base}/:id`, (req, res) => {
-    const db = load();
+  app.get(`${base}/:id`, async (req, res) => {
+    const db = await load();
     const item = db[resource].find((i) => i.id === Number(req.params.id));
     if (!item) return res.status(404).json({ erro: 'não encontrado' });
     res.json(item);
   });
 
-  app.post(base, (req, res) => {
-    const db = load();
+  app.post(base, async (req, res) => {
+    const db = await load();
     const item = { id: nextId(db[resource]), criadoEm: new Date().toISOString(), ...req.body };
     db[resource].push(item);
-    save(db);
+    await save(db);
     res.status(201).json(item);
   });
 
-  app.put(`${base}/:id`, (req, res) => {
-    const db = load();
+  app.put(`${base}/:id`, async (req, res) => {
+    const db = await load();
     const idx = db[resource].findIndex((i) => i.id === Number(req.params.id));
     if (idx === -1) return res.status(404).json({ erro: 'não encontrado' });
     db[resource][idx] = { ...db[resource][idx], ...req.body, id: Number(req.params.id) };
-    save(db);
+    await save(db);
     res.json(db[resource][idx]);
   });
 
-  app.delete(`${base}/:id`, (req, res) => {
-    const db = load();
+  app.delete(`${base}/:id`, async (req, res) => {
+    const db = await load();
     const before = db[resource].length;
     db[resource] = db[resource].filter((i) => i.id !== Number(req.params.id));
-    save(db);
+    await save(db);
     res.json({ removido: before !== db[resource].length });
   });
 }
 
 ['clientes', 'processos', 'eventos'].forEach(crud);
 
-app.get('/api/documentos', (req, res) => {
-  const db = load();
+app.get('/api/documentos', async (req, res) => {
+  const db = await load();
   res.json(db.documentos);
 });
 
-app.post('/api/documentos', upload.single('arquivo'), (req, res) => {
-  const db = load();
+app.post('/api/documentos', upload.single('arquivo'), async (req, res) => {
+  const db = await load();
+  let arquivoRef = null;
+  let nomeOriginal = null;
+  if (req.file) {
+    const idArquivo = await salvarArquivo(req.file.buffer, req.file.originalname, req.file.mimetype);
+    arquivoRef = '/uploads/' + idArquivo;
+    nomeOriginal = req.file.originalname;
+  }
   const item = {
     id: nextId(db.documentos),
-    nome: req.body.nome || (req.file ? req.file.originalname : 'Documento'),
+    nome: req.body.nome || nomeOriginal || 'Documento',
     clienteId: req.body.clienteId ? Number(req.body.clienteId) : null,
     processoId: req.body.processoId ? Number(req.body.processoId) : null,
     tipo: req.body.tipo || 'Outro',
-    arquivo: req.file ? '/uploads/' + req.file.filename : null,
-    nomeOriginal: req.file ? req.file.originalname : null,
+    arquivo: arquivoRef,
+    nomeOriginal,
     criadoEm: new Date().toISOString(),
   };
   db.documentos.push(item);
-  save(db);
+  await save(db);
   res.status(201).json(item);
 });
 
-app.delete('/api/documentos/:id', (req, res) => {
-  const db = load();
+app.delete('/api/documentos/:id', async (req, res) => {
+  const db = await load();
   const doc = db.documentos.find((d) => d.id === Number(req.params.id));
   if (doc && doc.arquivo) {
-    const filePath = path.join(uploadsDir, path.basename(doc.arquivo));
-    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    const idArquivo = Number(String(doc.arquivo).split('/').pop());
+    if (!Number.isNaN(idArquivo)) await removerArquivo(idArquivo);
   }
   db.documentos = db.documentos.filter((d) => d.id !== Number(req.params.id));
-  save(db);
+  await save(db);
   res.json({ removido: true });
 });
 
-app.get('/api/dashboard', (req, res) => {
-  const db = load();
+app.get('/api/dashboard', async (req, res) => {
+  const db = await load();
   const totalProcessos = db.processos.length;
   const liminaresDeferidas = db.processos.filter((p) => p.liminarDeferida).length;
   const hoje = new Date();
@@ -369,15 +401,26 @@ app.get('/api/dashboard', (req, res) => {
   });
 });
 
-app.get('/uploads/:filename', requireAuth, (req, res) => {
-  const safe = path.basename(req.params.filename);
-  const filePath = path.join(uploadsDir, safe);
-  if (!fs.existsSync(filePath)) return res.status(404).send('Arquivo não encontrado.');
-  res.sendFile(filePath);
+app.get('/uploads/:id', requireAuth, async (req, res) => {
+  const idArquivo = Number(req.params.id);
+  if (Number.isNaN(idArquivo)) return res.status(404).send('Arquivo não encontrado.');
+  const arquivo = await buscarArquivo(idArquivo);
+  if (!arquivo) return res.status(404).send('Arquivo não encontrado.');
+  res.setHeader('Content-Type', arquivo.mimetype || 'application/octet-stream');
+  res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(arquivo.nome_original || 'arquivo')}"`);
+  res.send(arquivo.dados);
 });
 
 app.use(express.static(path.join(__dirname, 'public')));
 
-app.listen(PORT, () => {
-  console.log(`CRM rodando em http://localhost:${PORT}`);
+async function iniciarServidor() {
+  await ensureAdminSeed();
+  app.listen(PORT, () => {
+    console.log(`CRM rodando em http://localhost:${PORT}`);
+  });
+}
+
+iniciarServidor().catch((err) => {
+  console.error('Erro ao iniciar o servidor:', err);
+  process.exit(1);
 });

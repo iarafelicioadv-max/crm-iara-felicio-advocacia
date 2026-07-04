@@ -10,6 +10,7 @@
     "express": "^4.19.2",
     "multer": "^2.2.0",
     "bcryptjs": "^2.4.3",
-    "cookie-session": "^2.1.0"
+    "cookie-session": "^2.1.0",
+    "pg": "^8.11.5"
   }
 }
