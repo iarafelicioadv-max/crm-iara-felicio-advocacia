@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>CRM Jurídico — Iara Vieira Felício Advocacia</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-badge">IVF</div>
+      <h1>IARA VIEIRA FELÍCIO</h1>
+      <span>ADVOCACIA &amp; CONSULTORIA JURÍDICA</span>
+    </div>
+    <nav>
+      <button class="nav-item active" data-view="dashboard">📊 Dashboard</button>
+      <button class="nav-item" data-view="kanban">🗂 Quadro Kanban</button>
+      <button class="nav-item" data-view="processos">📁 Processos</button>
+      <button class="nav-item" data-view="calendario">📅 Calendário</button>
+      <button class="nav-item" data-view="clientes">👥 Clientes</button>
+      <button class="nav-item" data-view="documentos">📄 Documentos</button>
+      <button class="nav-item" data-view="relatorios">📈 Relatórios</button>
+    </nav>
+  </aside>
+
+  <main class="content">
+
+    <!-- DASHBOARD -->
+    <section id="view-dashboard" class="view active">
+      <h2>Dashboard</h2>
+      <div class="cards">
+        <div class="card"><span class="card-label">Total de Casos</span><span class="card-value" id="stat-total">0</span></div>
+        <div class="card"><span class="card-label">Liminares Deferidas</span><span class="card-value" id="stat-liminares">0</span></div>
+        <div class="card"><span class="card-label">CPDs Ativos</span><span class="card-value" id="stat-cpds">0</span></div>
+        <div class="card"><span class="card-label">Ações Pendentes</span><span class="card-value" id="stat-pendentes">0</span></div>
+      </div>
+      <div class="panel">
+        <h3>Processos Recentes</h3>
+        <table class="table" id="tabela-recentes">
+          <thead><tr><th>Cliente</th><th>Processo</th><th>Status</th><th>Área</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- KANBAN -->
+    <section id="view-kanban" class="view">
+      <h2>Quadro Kanban</h2>
+      <div class="kanban-board" id="kanban-board"></div>
+    </section>
+
+    <!-- PROCESSOS -->
+    <section id="view-processos" class="view">
+      <div class="view-header">
+        <h2>Processos</h2>
+        <button class="btn-primary" onclick="abrirModalProcesso()">+ Novo Processo</button>
+      </div>
+      <table class="table" id="tabela-processos">
+        <thead><tr><th>Nº / Nome</th><th>Cliente</th><th>Área</th><th>Status</th><th>Prazo</th><th>Ações</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </section>
+
+    <!-- CALENDARIO -->
+    <section id="view-calendario" class="view">
+      <div class="view-header">
+        <h2>Calendário</h2>
+        <button class="btn-primary" onclick="abrirModalEvento()">+ Novo Evento</button>
+      </div>
+      <table class="table" id="tabela-eventos">
+        <thead><tr><th>Data</th><th>Título</th><th>Tipo</th><th>Processo</th><th>Ações</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </section>
+
+    <!-- CLIENTES -->
+    <section id="view-clientes" class="view">
+      <div class="view-header">
+        <h2>Clientes</h2>
+        <button class="btn-primary" onclick="abrirModalCliente()">+ Novo Cliente</button>
+      </div>
+      <table class="table" id="tabela-clientes">
+        <thead><tr><th>Nome</th><th>CPF/CNPJ</th><th>Telefone</th><th>E-mail</th><th>Ações</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </section>
+
+    <!-- DOCUMENTOS -->
+    <section id="view-documentos" class="view">
+      <div class="view-header">
+        <h2>Documentos</h2>
+        <button class="btn-primary" onclick="abrirModalDocumento()">+ Novo Documento</button>
+      </div>
+      <table class="table" id="tabela-documentos">
+        <thead><tr><th>Nome</th><th>Tipo</th><th>Cliente</th><th>Processo</th><th>Ações</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </section>
+
+    <!-- RELATORIOS -->
+    <section id="view-relatorios" class="view">
+      <h2>Relatórios</h2>
+      <div class="reports-grid">
+        <div class="panel"><h3>Processos por Status</h3><canvas id="chart-status"></canvas></div>
+        <div class="panel"><h3>Processos por Área</h3><canvas id="chart-area"></canvas></div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<div class="modal-overlay" id="modal-overlay">
+  <div class="modal" id="modal-box"></div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
