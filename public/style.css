@@ -148,3 +148,17 @@ h3 { font-family: 'Playfair Display', serif; font-size: 18px; margin: 0 0 16px; 
   .cards { grid-template-columns: repeat(2, 1fr); }
   .reports-grid { grid-template-columns: 1fr; }
 }
+
+/* ROTINA DOCUMENTAL - checklist (usado na aba da equipe e na pagina publica do cliente) */
+.checklist-item { background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; margin-bottom: 12px; }
+.checklist-item.enviado { border-color: #a9d3b4; background: #f3faf5; }
+.checklist-item-topo { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 8px; }
+.checklist-item strong { font-size: 14px; }
+.checklist-badge { font-size: 12px; padding: 3px 10px; border-radius: 20px; white-space: nowrap; }
+.checklist-badge.ok { background: #e6f4ea; color: #227a3d; }
+.checklist-badge.pendente { background: #faf7f5; color: var(--text-light); }
+.checklist-item input[type=file] { width: 100%; font-size: 13px; }
+.checklist-item small { display: block; margin-top: 6px; margin-bottom: 8px; color: var(--text-light); font-size: 12px; }
+.checklist-item a { color: var(--bordo); }
+.link-envio-box { display: flex; gap: 10px; align-items: center; background: #faf7f5; border: 1px solid var(--border); border-radius: 10px; padding: 12px 16px; margin-bottom: 20px; flex-wrap: wrap; }
+.link-envio-box input { flex: 1; min-width: 220px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; background: #fff; }

@@ -224,6 +224,95 @@ app.post('/api/sync/calendario', requireSyncKey, async (req, res) => {
   res.json({ criados, atualizados });
 });
 
+// ---------- Rotina Documental (checklist POP + envio pelo cliente) ----------
+const POP_CHECKLIST = [
+  { codigo: '01', rotulo: 'Procuração' },
+  { codigo: '02', rotulo: 'RG ou CNH' },
+  { codigo: '03', rotulo: 'CPF' },
+  { codigo: '04', rotulo: 'Certidão de Nascimento' },
+  { codigo: '05', rotulo: 'Certidão de Casamento' },
+  { codigo: '06', rotulo: 'Comprovante de Residência' },
+  { codigo: '07', rotulo: 'Comprovante de Rendimentos' },
+  { codigo: '08', rotulo: 'Declaração de Hipossuficiência' },
+  { codigo: '09', rotulo: 'Laudo Médico' },
+  { codigo: '10', rotulo: 'Relatório Médico' },
+  { codigo: '11', rotulo: 'Negativa Administrativa' },
+  { codigo: '12', rotulo: 'Exames' },
+  { codigo: '13', rotulo: 'Receitas Médicas' },
+  { codigo: '14', rotulo: 'Extratos de Pagamento do Plano' },
+  { codigo: '15', rotulo: 'Extratos de Coparticipação' },
+  { codigo: '16', rotulo: 'Carteirinha do Plano' },
+  { codigo: '17', rotulo: 'Cartão SUS' },
+  { codigo: '18', rotulo: 'Extrato de Plataforma' },
+  { codigo: '19', rotulo: 'Saldo de Plataforma' },
+  { codigo: '20', rotulo: 'Extratos Bancários' },
+  { codigo: '21', rotulo: 'Artigos Científicos' },
+  { codigo: '22', rotulo: 'Legislações' },
+  { codigo: '23', rotulo: 'Resoluções' },
+  { codigo: '24', rotulo: 'Outros Documentos' },
+];
+const CODIGOS_POP_VALIDOS = new Set(POP_CHECKLIST.map((i) => i.codigo));
+const uploadRotina = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
+
+function montarChecklist(db, processoId) {
+  const enviados = db.documentos.filter((d) => d.processoId === processoId && d.categoriaPOP);
+  return POP_CHECKLIST.map((item) => {
+    const doc = enviados.find((d) => d.categoriaPOP === item.codigo);
+    return {
+      ...item,
+      enviado: !!doc,
+      documentoId: doc ? doc.id : null,
+      arquivo: doc ? doc.arquivo : null,
+      nomeOriginal: doc ? doc.nomeOriginal : null,
+      enviadoEm: doc ? doc.criadoEm : null,
+    };
+  });
+}
+
+// Público: dados do processo + checklist, a partir do link enviado ao cliente (sem login)
+app.get('/api/publico/rotina/:token', async (req, res) => {
+  const db = await load();
+  const processo = db.processos.find((p) => p.uploadToken === req.params.token);
+  if (!processo) return res.status(404).json({ erro: 'link inválido ou expirado' });
+  const cliente = db.clientes.find((c) => c.id === processo.clienteId);
+  res.json({
+    clienteNome: cliente ? cliente.nome : '',
+    processoNome: processo.nome || '',
+    checklist: montarChecklist(db, processo.id),
+  });
+});
+
+// Público: recebe os arquivos enviados pelo cliente pelo link
+app.post('/api/publico/rotina/:token/upload', uploadRotina.any(), async (req, res) => {
+  const db = await load();
+  const processo = db.processos.find((p) => p.uploadToken === req.params.token);
+  if (!processo) return res.status(404).json({ erro: 'link inválido ou expirado' });
+
+  let salvos = 0;
+  for (const file of req.files || []) {
+    const codigo = file.fieldname;
+    if (!CODIGOS_POP_VALIDOS.has(codigo)) continue;
+    const item = POP_CHECKLIST.find((i) => i.codigo === codigo);
+    const idArquivo = await salvarArquivo(file.buffer, file.originalname, file.mimetype);
+    const doc = {
+      id: nextId(db.documentos),
+      nome: item.rotulo,
+      clienteId: processo.clienteId,
+      processoId: processo.id,
+      tipo: item.rotulo,
+      categoriaPOP: codigo,
+      arquivo: '/uploads/' + idArquivo,
+      nomeOriginal: file.originalname,
+      criadoEm: new Date().toISOString(),
+      origem: 'cliente-rotina',
+    };
+    db.documentos.push(doc);
+    salvos++;
+  }
+  await save(db);
+  res.json({ ok: true, salvos });
+});
+
 app.use('/api', requireAuth);
 
 app.get('/api/me', async (req, res) => {
@@ -328,6 +417,31 @@ function crud(resource) {
 
 ['clientes', 'processos', 'eventos'].forEach(crud);
 
+// Equipe: gera (ou reaproveita) o link de envio de documentos para o cliente de um processo
+app.post('/api/processos/:id/link-envio', async (req, res) => {
+  const db = await load();
+  const processo = db.processos.find((p) => p.id === Number(req.params.id));
+  if (!processo) return res.status(404).json({ erro: 'não encontrado' });
+  if (!processo.uploadToken) {
+    processo.uploadToken = crypto.randomBytes(16).toString('hex');
+    await save(db);
+  }
+  res.json({ token: processo.uploadToken, caminho: '/enviar-documentos/' + processo.uploadToken });
+});
+
+// Equipe: status do checklist de rotina documental de um processo
+app.get('/api/processos/:id/rotina', async (req, res) => {
+  const db = await load();
+  const processo = db.processos.find((p) => p.id === Number(req.params.id));
+  if (!processo) return res.status(404).json({ erro: 'não encontrado' });
+  const cliente = db.clientes.find((c) => c.id === processo.clienteId);
+  res.json({
+    processo: { id: processo.id, nome: processo.nome, uploadToken: processo.uploadToken || null },
+    clienteNome: cliente ? cliente.nome : '—',
+    checklist: montarChecklist(db, processo.id),
+  });
+});
+
 app.get('/api/documentos', async (req, res) => {
   const db = await load();
   res.json(db.documentos);
@@ -409,6 +523,10 @@ app.get('/uploads/:id', requireAuth, async (req, res) => {
   res.setHeader('Content-Type', arquivo.mimetype || 'application/octet-stream');
   res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(arquivo.nome_original || 'arquivo')}"`);
   res.send(arquivo.dados);
+});
+
+app.get('/enviar-documentos/:token', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'enviar-documentos.html'));
 });
 
 app.use(express.static(path.join(__dirname, 'public')));

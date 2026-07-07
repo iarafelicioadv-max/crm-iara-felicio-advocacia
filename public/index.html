@@ -25,6 +25,7 @@
       <button class="nav-item" data-view="calendario">📅 Calendário</button>
       <button class="nav-item" data-view="clientes">👥 Clientes</button>
       <button class="nav-item" data-view="documentos">📄 Documentos</button>
+      <button class="nav-item" data-view="rotina">🗃 Rotina Documental</button>
       <button class="nav-item" data-view="relatorios">📈 Relatórios</button>
       <button class="nav-item" id="nav-usuarios" data-view="usuarios" style="display:none;">🔑 Usuários</button>
     </nav>
@@ -107,6 +108,16 @@
         <thead><tr><th>Nome</th><th>Tipo</th><th>Cliente</th><th>Processo</th><th>Ações</th></tr></thead>
         <tbody></tbody>
       </table>
+    </section>
+
+    <!-- ROTINA DOCUMENTAL -->
+    <section id="view-rotina" class="view">
+      <h2>Rotina Documental</h2>
+      <div class="panel" style="margin-bottom:20px;">
+        <label>Selecione o processo</label>
+        <select id="rotina-select-processo" onchange="carregarRotinaProcesso()" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:14px;"></select>
+      </div>
+      <div id="rotina-conteudo"></div>
     </section>
 
     <!-- RELATORIOS -->

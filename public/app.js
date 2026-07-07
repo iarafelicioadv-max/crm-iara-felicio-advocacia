@@ -86,6 +86,7 @@ function renderAll() {
   renderClientes();
   renderDocumentos();
   renderRelatorios();
+  renderRotina();
   if (usuarioAtual && usuarioAtual.role === 'admin') renderUsuarios();
 }
 
@@ -199,6 +200,56 @@ function renderDocumentos() {
       <td>${d.processoId ? nomeProcesso(d.processoId) : '—'}</td>
       <td><button class="btn-icon" title="Excluir" onclick="excluir('documentos', ${d.id})">🗑️</button></td>
     </tr>`).join('') || '<tr><td colspan="5">Nenhum documento cadastrado ainda.</td></tr>';
+}
+
+// ---------- Rotina Documental ----------
+function renderRotina() {
+  const select = document.getElementById('rotina-select-processo');
+  if (!select) return;
+  const selecionadoAntes = select.value;
+  select.innerHTML = '<option value="">— selecione um processo —</option>' +
+    state.processos.map((p) => `<option value="${p.id}">${p.nome || 'Processo #' + p.id} — ${nomeCliente(p.clienteId)}</option>`).join('');
+  if (selecionadoAntes && state.processos.some((p) => String(p.id) === selecionadoAntes)) {
+    select.value = selecionadoAntes;
+    carregarRotinaProcesso();
+  }
+}
+
+async function carregarRotinaProcesso() {
+  const id = document.getElementById('rotina-select-processo').value;
+  const container = document.getElementById('rotina-conteudo');
+  if (!id) { container.innerHTML = ''; return; }
+  const dados = await api(`/api/processos/${id}/rotina`);
+  const link = dados.processo.uploadToken ? window.location.origin + '/enviar-documentos/' + dados.processo.uploadToken : null;
+  container.innerHTML = `
+    <div class="link-envio-box">
+      ${link
+        ? `<input type="text" readonly value="${link}" onclick="this.select()" /><button class="btn-secondary" onclick="copiarLinkRotina('${link}')">Copiar link</button>`
+        : '<span>Nenhum link gerado ainda para este processo.</span>'}
+      <button class="btn-primary" onclick="gerarLinkRotina(${id})">${link ? 'Gerar novo link' : 'Gerar link para o cliente'}</button>
+    </div>
+    <div class="panel">
+      <h3>Checklist — ${dados.clienteNome}</h3>
+      ${dados.checklist.map((item) => `
+        <div class="checklist-item ${item.enviado ? 'enviado' : ''}">
+          <div class="checklist-item-topo">
+            <strong>${item.codigo} — ${item.rotulo}</strong>
+            <span class="checklist-badge ${item.enviado ? 'ok' : 'pendente'}">${item.enviado ? 'Recebido' : 'Pendente'}</span>
+          </div>
+          ${item.enviado ? `<small>${item.nomeOriginal} — <a href="${item.arquivo}" target="_blank">abrir</a></small>` : ''}
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
+
+async function gerarLinkRotina(id) {
+  await api(`/api/processos/${id}/link-envio`, { method: 'POST' });
+  await carregarRotinaProcesso();
+}
+
+function copiarLinkRotina(link) {
+  navigator.clipboard.writeText(link).then(() => alert('Link copiado! Envie para o cliente por WhatsApp ou e-mail.'));
 }
 
 let charts = {};
