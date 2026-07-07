@@ -254,8 +254,8 @@ const POP_CHECKLIST = [
 const CODIGOS_POP_VALIDOS = new Set(POP_CHECKLIST.map((i) => i.codigo));
 const uploadRotina = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
 
-function montarChecklist(db, processoId) {
-  const enviados = db.documentos.filter((d) => d.processoId === processoId && d.categoriaPOP);
+function montarChecklist(db, clienteId) {
+  const enviados = db.documentos.filter((d) => d.clienteId === clienteId && d.categoriaPOP);
   return POP_CHECKLIST.map((item) => {
     const doc = enviados.find((d) => d.categoriaPOP === item.codigo);
     return {
@@ -269,24 +269,24 @@ function montarChecklist(db, processoId) {
   });
 }
 
-// Público: dados do processo + checklist, a partir do link enviado ao cliente (sem login)
+// Público: dados do cliente + checklist, a partir do link enviado ao cliente (sem login)
+// O link é gerado por CLIENTE (não por processo), pois o processo só é criado depois que
+// toda a documentação for reunida.
 app.get('/api/publico/rotina/:token', async (req, res) => {
   const db = await load();
-  const processo = db.processos.find((p) => p.uploadToken === req.params.token);
-  if (!processo) return res.status(404).json({ erro: 'link inválido ou expirado' });
-  const cliente = db.clientes.find((c) => c.id === processo.clienteId);
+  const cliente = db.clientes.find((c) => c.uploadToken === req.params.token);
+  if (!cliente) return res.status(404).json({ erro: 'link inválido ou expirado' });
   res.json({
-    clienteNome: cliente ? cliente.nome : '',
-    processoNome: processo.nome || '',
-    checklist: montarChecklist(db, processo.id),
+    clienteNome: cliente.nome || '',
+    checklist: montarChecklist(db, cliente.id),
   });
 });
 
 // Público: recebe os arquivos enviados pelo cliente pelo link
 app.post('/api/publico/rotina/:token/upload', uploadRotina.any(), async (req, res) => {
   const db = await load();
-  const processo = db.processos.find((p) => p.uploadToken === req.params.token);
-  if (!processo) return res.status(404).json({ erro: 'link inválido ou expirado' });
+  const cliente = db.clientes.find((c) => c.uploadToken === req.params.token);
+  if (!cliente) return res.status(404).json({ erro: 'link inválido ou expirado' });
 
   let salvos = 0;
   for (const file of req.files || []) {
@@ -297,8 +297,8 @@ app.post('/api/publico/rotina/:token/upload', uploadRotina.any(), async (req, re
     const doc = {
       id: nextId(db.documentos),
       nome: item.rotulo,
-      clienteId: processo.clienteId,
-      processoId: processo.id,
+      clienteId: cliente.id,
+      processoId: null,
       tipo: item.rotulo,
       categoriaPOP: codigo,
       arquivo: '/uploads/' + idArquivo,
@@ -417,28 +417,27 @@ function crud(resource) {
 
 ['clientes', 'processos', 'eventos'].forEach(crud);
 
-// Equipe: gera (ou reaproveita) o link de envio de documentos para o cliente de um processo
-app.post('/api/processos/:id/link-envio', async (req, res) => {
+// Equipe: gera (ou reaproveita) o link de envio de documentos para um cliente
+// (por cliente, não por processo — o processo só é criado depois que a documentação chega)
+app.post('/api/clientes/:id/link-envio', async (req, res) => {
   const db = await load();
-  const processo = db.processos.find((p) => p.id === Number(req.params.id));
-  if (!processo) return res.status(404).json({ erro: 'não encontrado' });
-  if (!processo.uploadToken) {
-    processo.uploadToken = crypto.randomBytes(16).toString('hex');
+  const cliente = db.clientes.find((c) => c.id === Number(req.params.id));
+  if (!cliente) return res.status(404).json({ erro: 'não encontrado' });
+  if (!cliente.uploadToken) {
+    cliente.uploadToken = crypto.randomBytes(16).toString('hex');
     await save(db);
   }
-  res.json({ token: processo.uploadToken, caminho: '/enviar-documentos/' + processo.uploadToken });
+  res.json({ token: cliente.uploadToken, caminho: '/enviar-documentos/' + cliente.uploadToken });
 });
 
-// Equipe: status do checklist de rotina documental de um processo
-app.get('/api/processos/:id/rotina', async (req, res) => {
+// Equipe: status do checklist de rotina documental de um cliente
+app.get('/api/clientes/:id/rotina', async (req, res) => {
   const db = await load();
-  const processo = db.processos.find((p) => p.id === Number(req.params.id));
-  if (!processo) return res.status(404).json({ erro: 'não encontrado' });
-  const cliente = db.clientes.find((c) => c.id === processo.clienteId);
+  const cliente = db.clientes.find((c) => c.id === Number(req.params.id));
+  if (!cliente) return res.status(404).json({ erro: 'não encontrado' });
   res.json({
-    processo: { id: processo.id, nome: processo.nome, uploadToken: processo.uploadToken || null },
-    clienteNome: cliente ? cliente.nome : '—',
-    checklist: montarChecklist(db, processo.id),
+    cliente: { id: cliente.id, nome: cliente.nome, uploadToken: cliente.uploadToken || null },
+    checklist: montarChecklist(db, cliente.id),
   });
 });
 

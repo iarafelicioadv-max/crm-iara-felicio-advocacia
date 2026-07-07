@@ -185,6 +185,7 @@ function renderClientes() {
       <td>${c.email || '—'}</td>
       <td>
         <button class="btn-icon" title="Editar" onclick="abrirModalCliente(${c.id})">✏️</button>
+        <button class="btn-icon" title="Solicitar documentos" onclick="solicitarDocumentosCliente(${c.id})">🔗</button>
         <button class="btn-icon" title="Excluir" onclick="excluir('clientes', ${c.id})">🗑️</button>
       </td>
     </tr>`).join('') || '<tr><td colspan="5">Nenhum cliente cadastrado ainda.</td></tr>';
@@ -203,33 +204,50 @@ function renderDocumentos() {
 }
 
 // ---------- Rotina Documental ----------
+// O link de envio de documentos é por CLIENTE (não por processo), pois o processo só é
+// criado depois que toda a documentação for reunida.
 function renderRotina() {
-  const select = document.getElementById('rotina-select-processo');
+  const select = document.getElementById('rotina-select-cliente');
   if (!select) return;
   const selecionadoAntes = select.value;
-  select.innerHTML = '<option value="">— selecione um processo —</option>' +
-    state.processos.map((p) => `<option value="${p.id}">${p.nome || 'Processo #' + p.id} — ${nomeCliente(p.clienteId)}</option>`).join('');
-  if (selecionadoAntes && state.processos.some((p) => String(p.id) === selecionadoAntes)) {
+  select.innerHTML = '<option value="">— selecione um cliente —</option>' +
+    state.clientes.map((c) => `<option value="${c.id}">${c.nome}</option>`).join('');
+  if (selecionadoAntes && state.clientes.some((c) => String(c.id) === selecionadoAntes)) {
     select.value = selecionadoAntes;
-    carregarRotinaProcesso();
+    carregarRotinaCliente();
   }
 }
 
-async function carregarRotinaProcesso() {
-  const id = document.getElementById('rotina-select-processo').value;
+function irParaView(nome) {
+  document.querySelectorAll('.nav-item[data-view]').forEach((b) => b.classList.remove('active'));
+  document.querySelectorAll('.view').forEach((v) => v.classList.remove('active'));
+  const btn = document.querySelector(`.nav-item[data-view="${nome}"]`);
+  if (btn) btn.classList.add('active');
+  document.getElementById('view-' + nome).classList.add('active');
+}
+
+function solicitarDocumentosCliente(id) {
+  irParaView('rotina');
+  const select = document.getElementById('rotina-select-cliente');
+  select.value = id;
+  carregarRotinaCliente();
+}
+
+async function carregarRotinaCliente() {
+  const id = document.getElementById('rotina-select-cliente').value;
   const container = document.getElementById('rotina-conteudo');
   if (!id) { container.innerHTML = ''; return; }
-  const dados = await api(`/api/processos/${id}/rotina`);
-  const link = dados.processo.uploadToken ? window.location.origin + '/enviar-documentos/' + dados.processo.uploadToken : null;
+  const dados = await api(`/api/clientes/${id}/rotina`);
+  const link = dados.cliente.uploadToken ? window.location.origin + '/enviar-documentos/' + dados.cliente.uploadToken : null;
   container.innerHTML = `
     <div class="link-envio-box">
       ${link
         ? `<input type="text" readonly value="${link}" onclick="this.select()" /><button class="btn-secondary" onclick="copiarLinkRotina('${link}')">Copiar link</button>`
-        : '<span>Nenhum link gerado ainda para este processo.</span>'}
+        : '<span>Nenhum link gerado ainda para este cliente.</span>'}
       <button class="btn-primary" onclick="gerarLinkRotina(${id})">${link ? 'Gerar novo link' : 'Gerar link para o cliente'}</button>
     </div>
     <div class="panel">
-      <h3>Checklist — ${dados.clienteNome}</h3>
+      <h3>Checklist — ${dados.cliente.nome}</h3>
       ${dados.checklist.map((item) => `
         <div class="checklist-item ${item.enviado ? 'enviado' : ''}">
           <div class="checklist-item-topo">
@@ -244,8 +262,8 @@ async function carregarRotinaProcesso() {
 }
 
 async function gerarLinkRotina(id) {
-  await api(`/api/processos/${id}/link-envio`, { method: 'POST' });
-  await carregarRotinaProcesso();
+  await api(`/api/clientes/${id}/link-envio`, { method: 'POST' });
+  await carregarRotinaCliente();
 }
 
 function copiarLinkRotina(link) {
