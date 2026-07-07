@@ -312,6 +312,7 @@ app.post('/api/publico/rotina/:token/upload', uploadRotina.any(), async (req, re
       nomeOriginal: file.originalname,
       criadoEm: new Date().toISOString(),
       origem: 'cliente-rotina',
+      visto: false,
     };
     db.documentos.push(doc);
     salvos++;
@@ -523,6 +524,22 @@ app.get('/api/dashboard', async (req, res) => {
       return { ...p, clienteNome: cliente ? cliente.nome : '—' };
     });
 
+  const documentosNovos = db.documentos
+    .filter((d) => d.origem === 'cliente-rotina' && !d.visto)
+    .sort((a, b) => new Date(b.criadoEm) - new Date(a.criadoEm))
+    .map((d) => {
+      const cliente = db.clientes.find((c) => c.id === d.clienteId);
+      return {
+        id: d.id,
+        nome: d.nome,
+        clienteId: d.clienteId,
+        clienteNome: cliente ? cliente.nome : '—',
+        arquivo: d.arquivo,
+        nomeOriginal: d.nomeOriginal,
+        criadoEm: d.criadoEm,
+      };
+    });
+
   res.json({
     totalProcessos,
     liminaresDeferidas,
@@ -530,7 +547,26 @@ app.get('/api/dashboard', async (req, res) => {
     acoesPendentes,
     totalClientes: db.clientes.length,
     processosRecentes: recentes,
+    documentosNovos,
   });
+});
+
+app.post('/api/documentos/:id/marcar-visto', async (req, res) => {
+  const db = await load();
+  const doc = db.documentos.find((d) => d.id === Number(req.params.id));
+  if (!doc) return res.status(404).json({ erro: 'não encontrado' });
+  doc.visto = true;
+  await save(db);
+  res.json({ ok: true });
+});
+
+app.post('/api/documentos/marcar-todos-vistos', async (req, res) => {
+  const db = await load();
+  db.documentos.forEach((d) => {
+    if (d.origem === 'cliente-rotina') d.visto = true;
+  });
+  await save(db);
+  res.json({ ok: true });
 });
 
 app.get('/uploads/:id', requireAuth, async (req, res) => {

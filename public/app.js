@@ -105,6 +105,51 @@ function renderDashboard() {
       <td><span class="badge ${classStatus(p.status)}">${p.status || '—'}</span></td>
       <td>${p.area || '—'}</td>
     </tr>`).join('') || '<tr><td colspan="4">Nenhum processo cadastrado ainda.</td></tr>';
+
+  renderDocumentosNovos(d.documentosNovos || []);
+}
+
+function renderDocumentosNovos(lista) {
+  const painel = document.getElementById('painel-documentos-novos');
+  const badge = document.getElementById('badge-documentos-novos');
+  const container = document.getElementById('lista-documentos-novos');
+
+  if (!lista.length) {
+    painel.style.display = 'none';
+    badge.style.display = 'none';
+    return;
+  }
+
+  painel.style.display = 'block';
+  badge.style.display = 'inline-block';
+  badge.textContent = lista.length;
+
+  container.innerHTML = lista.map((doc) => `
+    <div class="checklist-item">
+      <div class="checklist-item-topo">
+        <strong>${doc.clienteNome} — ${doc.nome}</strong>
+        <span class="checklist-badge ok">Novo</span>
+      </div>
+      <small>${doc.nomeOriginal} — <a href="${doc.arquivo}" target="_blank" onclick="marcarDocumentoVisto(${doc.id})">abrir</a> · recebido em ${new Date(doc.criadoEm).toLocaleString('pt-BR')}</small>
+      <div style="margin-top:8px;">
+        <button class="btn-secondary" onclick="marcarDocumentoVisto(${doc.id})">Marcar como visto</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+async function marcarDocumentoVisto(id) {
+  await api(`/api/documentos/${id}/marcar-visto`, { method: 'POST' });
+  const d = await api('/api/dashboard');
+  state.dashboard = d;
+  renderDocumentosNovos(d.documentosNovos || []);
+}
+
+async function marcarTodosDocumentosVistos() {
+  await api('/api/documentos/marcar-todos-vistos', { method: 'POST' });
+  const d = await api('/api/dashboard');
+  state.dashboard = d;
+  renderDocumentosNovos(d.documentosNovos || []);
 }
 
 function renderKanban() {

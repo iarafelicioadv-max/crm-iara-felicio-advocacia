@@ -56,6 +56,10 @@ body {
 }
 .nav-item:hover { background: rgba(255,255,255,0.08); }
 .nav-item.active { background: var(--bordo-claro); color: #fff; font-weight: 600; }
+.nav-badge {
+  display: inline-block; background: #e0554f; color: #fff; font-size: 11px; font-weight: 700;
+  border-radius: 20px; padding: 1px 7px; margin-left: 6px; vertical-align: middle;
+}
 
 /* CONTENT */
 .content { flex: 1; padding: 32px 40px; overflow-x: auto; }

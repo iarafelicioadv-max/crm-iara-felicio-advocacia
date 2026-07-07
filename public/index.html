@@ -24,7 +24,7 @@
       <button class="nav-item" data-view="processos">📁 Processos</button>
       <button class="nav-item" data-view="calendario">📅 Calendário</button>
       <button class="nav-item" data-view="clientes">👥 Clientes</button>
-      <button class="nav-item" data-view="documentos">📄 Documentos</button>
+      <button class="nav-item" data-view="documentos">📄 Documentos <span id="badge-documentos-novos" class="nav-badge" style="display:none;">0</span></button>
       <button class="nav-item" data-view="rotina">🗃 Rotina Documental</button>
       <button class="nav-item" data-view="relatorios">📈 Relatórios</button>
       <button class="nav-item" id="nav-usuarios" data-view="usuarios" style="display:none;">🔑 Usuários</button>
@@ -46,6 +46,13 @@
         <div class="card"><span class="card-label">Liminares Deferidas</span><span class="card-value" id="stat-liminares">0</span></div>
         <div class="card"><span class="card-label">Prazos da Semana</span><span class="card-value" id="stat-prazos">0</span></div>
         <div class="card"><span class="card-label">Ações Pendentes</span><span class="card-value" id="stat-pendentes">0</span></div>
+      </div>
+      <div class="panel" id="painel-documentos-novos" style="display:none;">
+        <div class="view-header">
+          <h3 style="margin:0;">🔔 Novos Documentos Recebidos</h3>
+          <button class="btn-secondary" onclick="marcarTodosDocumentosVistos()">Marcar todos como vistos</button>
+        </div>
+        <div id="lista-documentos-novos"></div>
       </div>
       <div class="panel">
         <h3>Processos Recentes</h3>
