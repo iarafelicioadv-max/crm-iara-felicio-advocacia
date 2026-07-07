@@ -247,18 +247,31 @@ async function carregarRotinaCliente() {
       <button class="btn-primary" onclick="gerarLinkRotina(${id})">${link ? 'Gerar novo link' : 'Gerar link para o cliente'}</button>
     </div>
     <div class="panel">
-      <h3>Checklist — ${dados.cliente.nome}</h3>
+      <div class="view-header">
+        <h3 style="margin:0;">Checklist — ${dados.cliente.nome}</h3>
+        <button class="btn-secondary" onclick="salvarDocumentosSolicitados(${id})">Salvar seleção de documentos</button>
+      </div>
+      <div class="notice">Marque quais documentos devem ser pedidos a este cliente pelo link. Os desmarcados não aparecem para ele — nem entram na lista de pendências.</div>
       ${dados.checklist.map((item) => `
-        <div class="checklist-item ${item.enviado ? 'enviado' : ''}">
+        <div class="checklist-item ${item.enviado ? 'enviado' : ''} ${item.solicitado ? '' : 'nao-solicitado'}">
           <div class="checklist-item-topo">
-            <strong>${item.codigo} — ${item.rotulo}</strong>
-            <span class="checklist-badge ${item.enviado ? 'ok' : 'pendente'}">${item.enviado ? 'Recebido' : 'Pendente'}</span>
+            <label style="display:flex;align-items:center;gap:8px;margin:0;">
+              <input type="checkbox" class="chk-solicitado" data-codigo="${item.codigo}" ${item.solicitado ? 'checked' : ''} style="width:auto;" />
+              <strong>${item.codigo} — ${item.rotulo}</strong>
+            </label>
+            <span class="checklist-badge ${item.enviado ? 'ok' : 'pendente'}">${item.enviado ? 'Recebido' : (item.solicitado ? 'Pendente' : 'Não solicitado')}</span>
           </div>
           ${item.enviado ? `<small>${item.nomeOriginal} — <a href="${item.arquivo}" target="_blank">abrir</a></small>` : ''}
         </div>
       `).join('')}
     </div>
   `;
+}
+
+async function salvarDocumentosSolicitados(id) {
+  const codigos = [...document.querySelectorAll('.chk-solicitado:checked')].map((el) => el.dataset.codigo);
+  await api(`/api/clientes/${id}/documentos-solicitados`, { method: 'PUT', body: JSON.stringify({ codigos }) });
+  await carregarRotinaCliente();
 }
 
 async function gerarLinkRotina(id) {

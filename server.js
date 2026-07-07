@@ -254,12 +254,19 @@ const POP_CHECKLIST = [
 const CODIGOS_POP_VALIDOS = new Set(POP_CHECKLIST.map((i) => i.codigo));
 const uploadRotina = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
 
-function montarChecklist(db, clienteId) {
-  const enviados = db.documentos.filter((d) => d.clienteId === clienteId && d.categoriaPOP);
+// Monta o checklist completo (24 itens) de um cliente, marcando quais foram
+// SOLICITADOS (cliente.documentosSolicitados — se vazio/ausente, considera todos
+// solicitados, para manter compatibilidade com clientes já cadastrados) e quais já
+// foram ENVIADOS pelo cliente.
+function checklistCompleto(db, cliente) {
+  const enviados = db.documentos.filter((d) => d.clienteId === cliente.id && d.categoriaPOP);
+  const lista = Array.isArray(cliente.documentosSolicitados) ? cliente.documentosSolicitados : [];
+  const setSolicitados = lista.length ? new Set(lista) : null;
   return POP_CHECKLIST.map((item) => {
     const doc = enviados.find((d) => d.categoriaPOP === item.codigo);
     return {
       ...item,
+      solicitado: setSolicitados ? setSolicitados.has(item.codigo) : true,
       enviado: !!doc,
       documentoId: doc ? doc.id : null,
       arquivo: doc ? doc.arquivo : null,
@@ -271,14 +278,14 @@ function montarChecklist(db, clienteId) {
 
 // Público: dados do cliente + checklist, a partir do link enviado ao cliente (sem login)
 // O link é gerado por CLIENTE (não por processo), pois o processo só é criado depois que
-// toda a documentação for reunida.
+// toda a documentação for reunida. Só mostra ao cliente os documentos SOLICITADOS.
 app.get('/api/publico/rotina/:token', async (req, res) => {
   const db = await load();
   const cliente = db.clientes.find((c) => c.uploadToken === req.params.token);
   if (!cliente) return res.status(404).json({ erro: 'link inválido ou expirado' });
   res.json({
     clienteNome: cliente.nome || '',
-    checklist: montarChecklist(db, cliente.id),
+    checklist: checklistCompleto(db, cliente).filter((item) => item.solicitado),
   });
 });
 
@@ -430,15 +437,27 @@ app.post('/api/clientes/:id/link-envio', async (req, res) => {
   res.json({ token: cliente.uploadToken, caminho: '/enviar-documentos/' + cliente.uploadToken });
 });
 
-// Equipe: status do checklist de rotina documental de um cliente
+// Equipe: status do checklist de rotina documental de um cliente (mostra os 24 itens,
+// com a marcação de quais foram solicitados e quais já chegaram)
 app.get('/api/clientes/:id/rotina', async (req, res) => {
   const db = await load();
   const cliente = db.clientes.find((c) => c.id === Number(req.params.id));
   if (!cliente) return res.status(404).json({ erro: 'não encontrado' });
   res.json({
     cliente: { id: cliente.id, nome: cliente.nome, uploadToken: cliente.uploadToken || null },
-    checklist: montarChecklist(db, cliente.id),
+    checklist: checklistCompleto(db, cliente),
   });
+});
+
+// Equipe: define quais documentos do POP serão solicitados a este cliente
+app.put('/api/clientes/:id/documentos-solicitados', async (req, res) => {
+  const db = await load();
+  const cliente = db.clientes.find((c) => c.id === Number(req.params.id));
+  if (!cliente) return res.status(404).json({ erro: 'não encontrado' });
+  const codigos = Array.isArray(req.body.codigos) ? req.body.codigos.filter((c) => CODIGOS_POP_VALIDOS.has(c)) : [];
+  cliente.documentosSolicitados = codigos;
+  await save(db);
+  res.json({ ok: true, documentosSolicitados: codigos });
 });
 
 app.get('/api/documentos', async (req, res) => {

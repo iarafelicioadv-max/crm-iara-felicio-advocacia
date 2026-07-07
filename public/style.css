@@ -152,6 +152,7 @@ h3 { font-family: 'Playfair Display', serif; font-size: 18px; margin: 0 0 16px; 
 /* ROTINA DOCUMENTAL - checklist (usado na aba da equipe e na pagina publica do cliente) */
 .checklist-item { background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; margin-bottom: 12px; }
 .checklist-item.enviado { border-color: #a9d3b4; background: #f3faf5; }
+.checklist-item.nao-solicitado { opacity: 0.55; }
 .checklist-item-topo { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 8px; }
 .checklist-item strong { font-size: 14px; }
 .checklist-badge { font-size: 12px; padding: 3px 10px; border-radius: 20px; white-space: nowrap; }
