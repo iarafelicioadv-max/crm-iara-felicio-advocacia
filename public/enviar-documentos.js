@@ -14,23 +14,47 @@ async function iniciar() {
   renderFormulario(dados);
 }
 
+function agruparPorTemplate(checklist) {
+  const grupos = [];
+  let atual = null;
+  checklist.forEach((item) => {
+    if (!atual || atual.templateId !== item.templateId) {
+      atual = { templateId: item.templateId, templateTitulo: item.templateTitulo, itens: [] };
+      grupos.push(atual);
+    }
+    atual.itens.push(item);
+  });
+  return grupos;
+}
+
 function renderFormulario(dados) {
   const primeiroNome = dados.clienteNome ? dados.clienteNome.split(' ')[0] : '';
+  const orientacoes = dados.orientacoes || [];
+  const grupos = agruparPorTemplate(dados.checklist || []);
   conteudo.innerHTML = `
     <div class="envio-intro">
       Olá${primeiroNome ? ', ' + primeiroNome : ''}! Envie abaixo os documentos que você já tiver disponíveis${dados.processoNome ? ' para o processo <strong>' + dados.processoNome + '</strong>' : ''}.
       Não é obrigatório enviar tudo de uma vez — você pode voltar a este mesmo link depois para enviar o restante.
     </div>
+    ${orientacoes.map((o) => `
+      <div class="orientacao-relato-box">
+        <h3>Como contar seu caso — ${o.titulo}</h3>
+        <p>${o.texto.replace(/\n/g, '</p><p>')}</p>
+      </div>
+    `).join('')}
     <form id="form-envio">
-      ${dados.checklist.map((item) => `
-        <div class="checklist-item ${item.enviado ? 'enviado' : ''}">
-          <div class="checklist-item-topo">
-            <strong>${item.codigo} — ${item.rotulo}</strong>
-            <span class="checklist-badge ${item.enviado ? 'ok' : 'pendente'}">${item.enviado ? 'Recebido' : 'Pendente'}</span>
+      ${grupos.map((g) => `
+        <h3 class="checklist-template-titulo">${g.templateTitulo}</h3>
+        ${g.itens.map((item) => `
+          <div class="checklist-item ${item.enviado ? 'enviado' : ''}">
+            <div class="checklist-item-topo">
+              <strong>${item.rotulo}</strong>
+              <span class="checklist-badge ${item.enviado ? 'ok' : 'pendente'}">${item.enviado ? 'Recebido' : 'Pendente'}</span>
+            </div>
+            ${item.enviado ? `<small>Já recebemos: ${item.nomeOriginal}. Se quiser enviar uma versão atualizada, escolha um novo arquivo abaixo.</small>` : ''}
+            <input type="file" name="${item.codigo}" />
           </div>
-          ${item.enviado ? `<small>Já recebemos: ${item.nomeOriginal}. Se quiser enviar uma versão atualizada, escolha um novo arquivo abaixo.</small>` : ''}
-          <input type="file" name="${item.codigo}" />
-        </div>
+        `).join('')}
       `).join('')}
       <div class="envio-footer">
         <button type="submit" class="btn-primary" id="btn-enviar">Enviar documentos selecionados</button>

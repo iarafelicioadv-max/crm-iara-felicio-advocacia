@@ -4,7 +4,7 @@ const TIPOS_PROCESSO = ['Ação Ordinária', 'CPD', 'Mandado de Segurança', 'Ex
 const TIPOS_EVENTO = ['Audiência', 'Prazo', 'Reunião', 'Perícia', 'Outro'];
 const TIPOS_DOC = ['Petição', 'Procuração', 'Contrato', 'Documento Pessoal', 'Prova', 'Outro'];
 
-let state = { clientes: [], processos: [], eventos: [], documentos: [], usuarios: [] };
+let state = { clientes: [], processos: [], eventos: [], documentos: [], checklistTemplates: [], usuarios: [] };
 let usuarioAtual = null;
 
 // ---------- API helpers ----------
@@ -31,10 +31,11 @@ async function carregarTudo() {
     api('/api/eventos'),
     api('/api/documentos'),
     api('/api/dashboard'),
+    api('/api/checklist-templates'),
   ];
   if (usuarioAtual && usuarioAtual.role === 'admin') chamadas.push(api('/api/usuarios'));
-  const [clientes, processos, eventos, documentos, dashboard, usuarios] = await Promise.all(chamadas);
-  state = { clientes, processos, eventos, documentos, dashboard, usuarios: usuarios || [] };
+  const [clientes, processos, eventos, documentos, dashboard, checklistTemplates, usuarios] = await Promise.all(chamadas);
+  state = { clientes, processos, eventos, documentos, dashboard, checklistTemplates, usuarios: usuarios || [] };
   renderAll();
 }
 
@@ -278,12 +279,25 @@ function solicitarDocumentosCliente(id) {
   carregarRotinaCliente();
 }
 
+const ORDEM_CATEGORIAS = ['Genérico', 'Direito da Saúde', 'FGTS, Previdenciário e Trabalhista', 'Ludopatia, Bancário e Família'];
+
+function categoriasAgrupadas() {
+  const grupos = {};
+  state.checklistTemplates.forEach((t) => {
+    if (!grupos[t.categoria]) grupos[t.categoria] = [];
+    grupos[t.categoria].push(t);
+  });
+  return ORDEM_CATEGORIAS.filter((c) => grupos[c]).map((c) => ({ categoria: c, templates: grupos[c] }));
+}
+
 async function carregarRotinaCliente() {
   const id = document.getElementById('rotina-select-cliente').value;
   const container = document.getElementById('rotina-conteudo');
   if (!id) { container.innerHTML = ''; return; }
   const dados = await api(`/api/clientes/${id}/rotina`);
   const link = dados.cliente.uploadToken ? window.location.origin + '/enviar-documentos/' + dados.cliente.uploadToken : null;
+  const tiposAtivos = new Set(dados.cliente.tiposCaso || ['GEN']);
+
   container.innerHTML = `
     <div class="link-envio-box">
       ${link
@@ -291,18 +305,59 @@ async function carregarRotinaCliente() {
         : '<span>Nenhum link gerado ainda para este cliente.</span>'}
       <button class="btn-primary" onclick="gerarLinkRotina(${id})">${link ? 'Gerar novo link' : 'Gerar link para o cliente'}</button>
     </div>
+
+    <div class="panel">
+      <div class="view-header">
+        <h3 style="margin:0;">Tipo(s) de caso — ${dados.cliente.nome}</h3>
+        <button class="btn-primary" onclick="salvarTiposCaso(${id})">Aplicar tipo(s) de caso</button>
+      </div>
+      <div class="notice">Escolha 1 ou mais tipos de caso. O checklist de documentos e a orientação de relato do cliente são montados automaticamente a partir daqui. Combine mais de um quando o caso reunir vários temas (ex: cirurgia + OPME + reembolso).</div>
+      <div class="tipo-caso-selector">
+        ${categoriasAgrupadas().map((grupo) => `
+          <div class="tipo-caso-categoria">
+            <h4>${grupo.categoria}</h4>
+            ${grupo.templates.map((t) => `
+              <label class="tipo-caso-item">
+                <input type="checkbox" class="chk-tipo-caso" value="${t.id}" ${tiposAtivos.has(t.id) ? 'checked' : ''} />
+                <span>${t.titulo} <small>(${t.quantidadeItens} itens${t.temOrientacao ? ' · com orientação de relato' : ''})</small></span>
+              </label>
+            `).join('')}
+          </div>
+        `).join('')}
+      </div>
+    </div>
+
     <div class="panel">
       <div class="view-header">
         <h3 style="margin:0;">Checklist — ${dados.cliente.nome}</h3>
         <button class="btn-secondary" onclick="salvarDocumentosSolicitados(${id})">Salvar seleção de documentos</button>
       </div>
       <div class="notice">Marque quais documentos devem ser pedidos a este cliente pelo link. Os desmarcados não aparecem para ele — nem entram na lista de pendências.</div>
-      ${dados.checklist.map((item) => `
+      ${agruparChecklistPorTemplate(dados.checklist)}
+    </div>
+  `;
+}
+
+function agruparChecklistPorTemplate(checklist) {
+  const grupos = [];
+  let atual = null;
+  checklist.forEach((item) => {
+    if (!atual || atual.templateId !== item.templateId) {
+      atual = { templateId: item.templateId, templateTitulo: item.templateTitulo, itens: [] };
+      grupos.push(atual);
+    }
+    atual.itens.push(item);
+  });
+  if (!grupos.length) return '<p class="notice">Nenhum tipo de caso selecionado ainda.</p>';
+  return grupos.map((g) => `
+    <div class="checklist-template-grupo">
+      <h4 class="checklist-template-titulo">${g.templateTitulo}</h4>
+      ${g.itens.map((item) => `
         <div class="checklist-item ${item.enviado ? 'enviado' : ''} ${item.solicitado ? '' : 'nao-solicitado'}">
           <div class="checklist-item-topo">
             <label style="display:flex;align-items:center;gap:8px;margin:0;">
               <input type="checkbox" class="chk-solicitado" data-codigo="${item.codigo}" ${item.solicitado ? 'checked' : ''} style="width:auto;" />
-              <strong>${item.codigo} — ${item.rotulo}</strong>
+              <strong>${item.rotulo}</strong>
             </label>
             <span class="checklist-badge ${item.enviado ? 'ok' : 'pendente'}">${item.enviado ? 'Recebido' : (item.solicitado ? 'Pendente' : 'Não solicitado')}</span>
           </div>
@@ -310,7 +365,13 @@ async function carregarRotinaCliente() {
         </div>
       `).join('')}
     </div>
-  `;
+  `).join('');
+}
+
+async function salvarTiposCaso(id) {
+  const tipos = [...document.querySelectorAll('.chk-tipo-caso:checked')].map((el) => el.value);
+  await api(`/api/clientes/${id}/tipos-caso`, { method: 'PUT', body: JSON.stringify({ tipos }) });
+  await carregarRotinaCliente();
 }
 
 async function salvarDocumentosSolicitados(id) {

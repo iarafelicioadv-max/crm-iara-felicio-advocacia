@@ -157,6 +157,17 @@ h3 { font-family: 'Playfair Display', serif; font-size: 18px; margin: 0 0 16px; 
 .checklist-item { background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; margin-bottom: 12px; }
 .checklist-item.enviado { border-color: #a9d3b4; background: #f3faf5; }
 .checklist-item.nao-solicitado { opacity: 0.55; }
+.tipo-caso-selector { max-height: 360px; overflow-y: auto; border: 1px solid var(--border); border-radius: 10px; padding: 12px 16px; }
+.tipo-caso-categoria { margin-bottom: 14px; }
+.tipo-caso-categoria:last-child { margin-bottom: 0; }
+.tipo-caso-categoria h4 { margin: 0 0 6px; font-size: 13px; color: var(--bordo); text-transform: uppercase; letter-spacing: 0.5px; }
+.tipo-caso-item { display: flex; align-items: flex-start; gap: 8px; padding: 4px 0; font-size: 13px; cursor: pointer; }
+.tipo-caso-item input { width: auto; margin-top: 3px; }
+.tipo-caso-item small { color: var(--text-light); }
+.checklist-template-grupo { margin-bottom: 22px; }
+.checklist-template-grupo:last-child { margin-bottom: 0; }
+.checklist-template-titulo { font-family: 'Playfair Display', serif; font-size: 15px; color: var(--bordo); border-bottom: 1px solid var(--border); padding-bottom: 6px; margin: 0 0 10px; }
+
 .checklist-item-topo { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 8px; }
 .checklist-item strong { font-size: 14px; }
 .checklist-badge { font-size: 12px; padding: 3px 10px; border-radius: 20px; white-space: nowrap; }

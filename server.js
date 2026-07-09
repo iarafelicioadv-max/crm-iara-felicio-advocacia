@@ -224,56 +224,56 @@ app.post('/api/sync/calendario', requireSyncKey, async (req, res) => {
   res.json({ criados, atualizados });
 });
 
-// ---------- Rotina Documental (checklist POP + envio pelo cliente) ----------
-const POP_CHECKLIST = [
-  { codigo: '01', rotulo: 'Procuração' },
-  { codigo: '02', rotulo: 'RG ou CNH' },
-  { codigo: '03', rotulo: 'CPF' },
-  { codigo: '04', rotulo: 'Certidão de Nascimento' },
-  { codigo: '05', rotulo: 'Certidão de Casamento' },
-  { codigo: '06', rotulo: 'Comprovante de Residência' },
-  { codigo: '07', rotulo: 'Comprovante de Rendimentos' },
-  { codigo: '08', rotulo: 'Declaração de Hipossuficiência' },
-  { codigo: '09', rotulo: 'Laudo Médico' },
-  { codigo: '10', rotulo: 'Relatório Médico' },
-  { codigo: '11', rotulo: 'Negativa Administrativa' },
-  { codigo: '12', rotulo: 'Exames' },
-  { codigo: '13', rotulo: 'Receitas Médicas' },
-  { codigo: '14', rotulo: 'Extratos de Pagamento do Plano' },
-  { codigo: '15', rotulo: 'Extratos de Coparticipação' },
-  { codigo: '16', rotulo: 'Carteirinha do Plano' },
-  { codigo: '17', rotulo: 'Cartão SUS' },
-  { codigo: '18', rotulo: 'Extrato de Plataforma' },
-  { codigo: '19', rotulo: 'Saldo de Plataforma' },
-  { codigo: '20', rotulo: 'Extratos Bancários' },
-  { codigo: '21', rotulo: 'Artigos Científicos' },
-  { codigo: '22', rotulo: 'Legislações' },
-  { codigo: '23', rotulo: 'Resoluções' },
-  { codigo: '24', rotulo: 'Outros Documentos' },
-];
-const CODIGOS_POP_VALIDOS = new Set(POP_CHECKLIST.map((i) => i.codigo));
+// ---------- Rotina Documental (checklists por tipo de caso + envio pelo cliente) ----------
+const { CHECKLIST_TEMPLATES, TEMPLATE_POR_ID, ITEM_POR_CODIGO, CODIGOS_VALIDOS } = require('./checklists');
 const uploadRotina = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
 
-// Monta o checklist completo (24 itens) de um cliente, marcando quais foram
-// SOLICITADOS (cliente.documentosSolicitados — se vazio/ausente, considera todos
-// solicitados, para manter compatibilidade com clientes já cadastrados) e quais já
-// foram ENVIADOS pelo cliente.
+// Tipos de caso ativos de um cliente. Se o cliente ainda não teve nenhum tipo de caso
+// escolhido (clientes cadastrados antes desta funcionalidade), cai no checklist Genérico,
+// mantendo o comportamento anterior.
+function tiposCasoAtivos(cliente) {
+  const tipos = Array.isArray(cliente.tiposCaso) ? cliente.tiposCaso.filter((id) => TEMPLATE_POR_ID[id]) : [];
+  return tipos.length ? tipos : ['GEN'];
+}
+
+// Monta o checklist completo de um cliente, combinando os itens de todos os tipos de
+// caso escolhidos para ele, e marcando quais foram SOLICITADOS (cliente.documentosSolicitados
+// — se vazio/ausente, considera todos solicitados, para manter compatibilidade com clientes
+// já cadastrados) e quais já foram ENVIADOS pelo cliente.
 function checklistCompleto(db, cliente) {
   const enviados = db.documentos.filter((d) => d.clienteId === cliente.id && d.categoriaPOP);
   const lista = Array.isArray(cliente.documentosSolicitados) ? cliente.documentosSolicitados : [];
   const setSolicitados = lista.length ? new Set(lista) : null;
-  return POP_CHECKLIST.map((item) => {
-    const doc = enviados.find((d) => d.categoriaPOP === item.codigo);
-    return {
-      ...item,
-      solicitado: setSolicitados ? setSolicitados.has(item.codigo) : true,
-      enviado: !!doc,
-      documentoId: doc ? doc.id : null,
-      arquivo: doc ? doc.arquivo : null,
-      nomeOriginal: doc ? doc.nomeOriginal : null,
-      enviadoEm: doc ? doc.criadoEm : null,
-    };
-  });
+  const tipos = tiposCasoAtivos(cliente);
+  const itens = [];
+  for (const tipoId of tipos) {
+    const template = TEMPLATE_POR_ID[tipoId];
+    if (!template) continue;
+    for (const item of template.itens) {
+      const doc = enviados.find((d) => d.categoriaPOP === item.codigo);
+      itens.push({
+        ...item,
+        templateId: template.id,
+        templateTitulo: template.titulo,
+        solicitado: setSolicitados ? setSolicitados.has(item.codigo) : true,
+        enviado: !!doc,
+        documentoId: doc ? doc.id : null,
+        arquivo: doc ? doc.arquivo : null,
+        nomeOriginal: doc ? doc.nomeOriginal : null,
+        enviadoEm: doc ? doc.criadoEm : null,
+      });
+    }
+  }
+  return itens;
+}
+
+// Orientações de relato dos tipos de caso ativos de um cliente (para exibir na página
+// pública, orientando o que o cliente deve contar sobre a situação dele).
+function orientacoesRelato(cliente) {
+  return tiposCasoAtivos(cliente)
+    .map((id) => TEMPLATE_POR_ID[id])
+    .filter((t) => t && t.orientacaoRelato)
+    .map((t) => ({ titulo: t.titulo, texto: t.orientacaoRelato }));
 }
 
 // Público: dados do cliente + checklist, a partir do link enviado ao cliente (sem login)
@@ -285,6 +285,7 @@ app.get('/api/publico/rotina/:token', async (req, res) => {
   if (!cliente) return res.status(404).json({ erro: 'link inválido ou expirado' });
   res.json({
     clienteNome: cliente.nome || '',
+    orientacoes: orientacoesRelato(cliente),
     checklist: checklistCompleto(db, cliente).filter((item) => item.solicitado),
   });
 });
@@ -298,8 +299,8 @@ app.post('/api/publico/rotina/:token/upload', uploadRotina.any(), async (req, re
   let salvos = 0;
   for (const file of req.files || []) {
     const codigo = file.fieldname;
-    if (!CODIGOS_POP_VALIDOS.has(codigo)) continue;
-    const item = POP_CHECKLIST.find((i) => i.codigo === codigo);
+    if (!CODIGOS_VALIDOS.has(codigo)) continue;
+    const item = ITEM_POR_CODIGO[codigo];
     const idArquivo = await salvarArquivo(file.buffer, file.originalname, file.mimetype);
     const doc = {
       id: nextId(db.documentos),
@@ -438,24 +439,76 @@ app.post('/api/clientes/:id/link-envio', async (req, res) => {
   res.json({ token: cliente.uploadToken, caminho: '/enviar-documentos/' + cliente.uploadToken });
 });
 
-// Equipe: status do checklist de rotina documental de um cliente (mostra os 24 itens,
-// com a marcação de quais foram solicitados e quais já chegaram)
+// Equipe: lista os modelos de checklist disponíveis (Genérico + os 42 tipos de caso do
+// manual), agrupados por categoria, para a equipe escolher quais se aplicam a cada cliente.
+app.get('/api/checklist-templates', async (req, res) => {
+  res.json(
+    CHECKLIST_TEMPLATES.map((t) => ({
+      id: t.id,
+      categoria: t.categoria,
+      titulo: t.titulo,
+      quantidadeItens: t.itens.length,
+      temOrientacao: !!t.orientacaoRelato,
+    }))
+  );
+});
+
+// Equipe: status do checklist de rotina documental de um cliente (mostra os itens dos
+// tipos de caso escolhidos para ele, com a marcação de quais foram solicitados e quais
+// já chegaram)
 app.get('/api/clientes/:id/rotina', async (req, res) => {
   const db = await load();
   const cliente = db.clientes.find((c) => c.id === Number(req.params.id));
   if (!cliente) return res.status(404).json({ erro: 'não encontrado' });
   res.json({
-    cliente: { id: cliente.id, nome: cliente.nome, uploadToken: cliente.uploadToken || null },
+    cliente: {
+      id: cliente.id,
+      nome: cliente.nome,
+      uploadToken: cliente.uploadToken || null,
+      tiposCaso: tiposCasoAtivos(cliente),
+    },
     checklist: checklistCompleto(db, cliente),
   });
 });
 
-// Equipe: define quais documentos do POP serão solicitados a este cliente
+// Equipe: define quais tipos de caso se aplicam a este cliente (pode combinar mais de um,
+// ex: cirurgia + OPME + reembolso). Ao ativar um tipo de caso novo, todos os itens dele
+// entram solicitados por padrão; ao remover um tipo de caso, seus itens somem do checklist.
+app.put('/api/clientes/:id/tipos-caso', async (req, res) => {
+  const db = await load();
+  const cliente = db.clientes.find((c) => c.id === Number(req.params.id));
+  if (!cliente) return res.status(404).json({ erro: 'não encontrado' });
+
+  const tiposNovos = Array.isArray(req.body.tipos) ? req.body.tipos.filter((id) => TEMPLATE_POR_ID[id]) : [];
+  const tiposAntigos = new Set(tiposCasoAtivos(cliente));
+  const setNovos = new Set(tiposNovos.length ? tiposNovos : ['GEN']);
+
+  const antigoSolicitados = new Set(Array.isArray(cliente.documentosSolicitados) ? cliente.documentosSolicitados : []);
+  const novoSolicitados = new Set();
+  for (const codigo of antigoSolicitados) {
+    const item = ITEM_POR_CODIGO[codigo];
+    if (item && setNovos.has(item.templateId)) novoSolicitados.add(codigo);
+  }
+  for (const tipoId of setNovos) {
+    if (!tiposAntigos.has(tipoId)) {
+      const template = TEMPLATE_POR_ID[tipoId];
+      if (template) template.itens.forEach((item) => novoSolicitados.add(item.codigo));
+    }
+  }
+
+  cliente.tiposCaso = [...setNovos];
+  cliente.documentosSolicitados = [...novoSolicitados];
+  await save(db);
+  res.json({ ok: true, tiposCaso: cliente.tiposCaso });
+});
+
+// Equipe: ajuste fino — marca/desmarca itens individuais dentro dos tipos de caso já
+// escolhidos para este cliente
 app.put('/api/clientes/:id/documentos-solicitados', async (req, res) => {
   const db = await load();
   const cliente = db.clientes.find((c) => c.id === Number(req.params.id));
   if (!cliente) return res.status(404).json({ erro: 'não encontrado' });
-  const codigos = Array.isArray(req.body.codigos) ? req.body.codigos.filter((c) => CODIGOS_POP_VALIDOS.has(c)) : [];
+  const codigos = Array.isArray(req.body.codigos) ? req.body.codigos.filter((c) => CODIGOS_VALIDOS.has(c)) : [];
   cliente.documentosSolicitados = codigos;
   await save(db);
   res.json({ ok: true, documentosSolicitados: codigos });
