@@ -1,16 +1,12 @@
-// Camada de dados baseada em PostgreSQL (Neon).
-// Guarda todo o "banco" como um único registro JSONB (simples e suficiente
-// para uma equipe pequena), e os arquivos (documentos anexados) em uma
-// tabela separada como bytea, para que nada se perca quando o código for
-// atualizado e o serviço reiniciado (o disco local do Render NÃO é
-// persistente entre deploys — por isso a migração para um banco externo).
+// Camada de dados simples baseada em arquivo JSON.
+// Suficiente para uma equipe pequena (2-5 pessoas) usando o CRM ao mesmo tempo
+// a partir de um único servidor. Para crescer além disso, migrar para Postgres/MySQL
+// (ver README.md, seção "Evoluindo o sistema").
 
-const { Pool } = require('pg');
+const fs = require('fs');
+const path = require('path');
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false },
-});
+const DB_PATH = path.join(__dirname, 'data.json');
 
 const EMPTY_DB = {
   clientes: [],
@@ -18,75 +14,39 @@ const EMPTY_DB = {
   eventos: [],
   documentos: [],
   usuarios: [],
+  auditoria: [],
 };
 
-let tabelasProntas = null;
-function ensureTabelas() {
-  if (!tabelasProntas) {
-    tabelasProntas = (async () => {
-      await pool.query(`
-        CREATE TABLE IF NOT EXISTS app_data (
-          id INT PRIMARY KEY,
-          data JSONB NOT NULL
-        )
-      `);
-      await pool.query(`
-        CREATE TABLE IF NOT EXISTS arquivos (
-          id SERIAL PRIMARY KEY,
-          nome_original TEXT,
-          mimetype TEXT,
-          dados BYTEA NOT NULL,
-          criado_em TIMESTAMPTZ DEFAULT NOW()
-        )
-      `);
-    })();
-  }
-  return tabelasProntas;
-}
-
-async function load() {
-  await ensureTabelas();
-  const res = await pool.query('SELECT data FROM app_data WHERE id = 1');
-  if (res.rows.length === 0) {
-    await pool.query('INSERT INTO app_data (id, data) VALUES (1, $1)', [JSON.stringify(EMPTY_DB)]);
+function load() {
+  if (!fs.existsSync(DB_PATH)) {
+    save(EMPTY_DB);
     return structuredClone(EMPTY_DB);
   }
-  const data = res.rows[0].data || {};
-  // garante que coleções novas existam mesmo se o banco já for antigo
-  return { ...structuredClone(EMPTY_DB), ...data };
+  const raw = fs.readFileSync(DB_PATH, 'utf-8');
+  try {
+    return JSON.parse(raw);
+  } catch (e) {
+    console.error('data.json corrompido, recriando com base vazia.', e);
+    save(EMPTY_DB);
+    return structuredClone(EMPTY_DB);
+  }
 }
 
-async function save(db) {
-  await ensureTabelas();
-  await pool.query(
-    'INSERT INTO app_data (id, data) VALUES (1, $1) ON CONFLICT (id) DO UPDATE SET data = $1',
-    [JSON.stringify(db)]
-  );
+function save(db) {
+  fs.writeFileSync(DB_PATH, JSON.stringify(db, null, 2), 'utf-8');
 }
 
 function nextId(list) {
   return list.length ? Math.max(...list.map((i) => i.id)) + 1 : 1;
 }
 
-async function salvarArquivo(buffer, nomeOriginal, mimetype) {
-  await ensureTabelas();
-  const res = await pool.query(
-    'INSERT INTO arquivos (nome_original, mimetype, dados) VALUES ($1, $2, $3) RETURNING id',
-    [nomeOriginal || null, mimetype || 'application/octet-stream', buffer]
-  );
-  return res.rows[0].id;
+function registrarAuditoria(db, { usuarioId, usuarioNome, acao, recurso, recursoId, detalhes }) {
+  if (!db.auditoria) db.auditoria = [];
+  db.auditoria.push({
+    id: nextId(db.auditoria), usuarioId: usuarioId || null, usuarioNome: usuarioNome || 'Sistema',
+    acao, recurso, recursoId: recursoId || null, detalhes: detalhes || '', criadoEm: new Date().toISOString(),
+  });
+  if (db.auditoria.length > 1000) db.auditoria = db.auditoria.slice(-1000);
 }
 
-async function buscarArquivo(id) {
-  await ensureTabelas();
-  const res = await pool.query('SELECT nome_original, mimetype, dados FROM arquivos WHERE id = $1', [id]);
-  if (res.rows.length === 0) return null;
-  return res.rows[0];
-}
-
-async function removerArquivo(id) {
-  await ensureTabelas();
-  await pool.query('DELETE FROM arquivos WHERE id = $1', [id]);
-}
-
-module.exports = { load, save, nextId, salvarArquivo, buscarArquivo, removerArquivo };
+module.exports = { load, save, nextId, registrarAuditoria, DB_PATH };
