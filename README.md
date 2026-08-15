@@ -10,11 +10,22 @@ Sistema de gestão para o escritório: Dashboard, Quadro Kanban, Processos, Cale
 - Tarefas com responsável, prazo fatal/interno, evidência de conclusão e revisão.
 - Central de publicações para TJMG, TRT-3, TRF-6 e DJEN/CNJ, com conciliação pelo número CNJ.
 - Financeiro com contratos, recebimentos, vencidos e projeções de 30, 60 e 90 dias.
-- Funil de leads com atalho para WhatsApp.
+- Funil de leads com receptor oficial da Meta, criação automática sem duplicidade, contador de não lidas, histórico e atalho para responder no WhatsApp.
 - Rotina documental preservada, incluindo os 42 checklists por tipo de caso e link de envio ao cliente.
 - Dados e documentos persistidos em PostgreSQL/Neon.
 
-A consulta automática ao DJEN e a entrada automática de leads pelo WhatsApp dependem de integrações oficiais externas. O CRM já contém os fluxos de conciliação e tratamento, sem simular conexões não configuradas.
+A consulta automática ao DJEN depende de integração oficial externa. O receptor do WhatsApp já está implementado no CRM e passa a receber mensagens assim que a Meta e a Render forem vinculadas conforme a seção abaixo.
+
+## Integração com WhatsApp Business Platform
+
+O endpoint de webhook é `https://crm-iara-felicio-advocacia.onrender.com/webhooks/whatsapp`.
+
+Variáveis secretas exigidas na Render:
+
+- `WHATSAPP_VERIFY_TOKEN`: frase aleatória criada para confirmar o webhook; deve ser idêntica no painel Meta.
+- `WHATSAPP_APP_SECRET`: segredo do aplicativo em Meta for Developers; valida a assinatura de cada mensagem recebida.
+
+No painel Meta for Developers, configure a URL acima, informe o mesmo token de verificação e assine o campo `messages`. Nunca grave os valores secretos no GitHub.
 
 ## 1. Login
 

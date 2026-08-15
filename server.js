@@ -5,11 +5,17 @@ const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const cookieSession = require('cookie-session');
 const { load, save, nextId, salvarArquivo, buscarArquivo, removerArquivo } = require('./db');
+const { aplicarWebhookWhatsApp, assinaturaValida } = require('./whatsapp');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-app.use(express.json({ limit: '15mb' }));
+app.use(express.json({
+  limit: '15mb',
+  verify: (req, res, buffer) => {
+    req.rawBody = Buffer.from(buffer);
+  },
+}));
 
 app.use(
   cookieSession({
@@ -240,6 +246,44 @@ app.post('/api/sync/calendario', requireSyncKey, async (req, res) => {
   res.json({ criados, atualizados });
 });
 
+// ---------- WhatsApp Business Platform (Cloud API oficial da Meta) ----------
+// A Meta chama esta rota por GET uma única vez para confirmar a propriedade do
+// endpoint. O token é um segredo definido na Render e repetido no painel Meta.
+app.get('/webhooks/whatsapp', (req, res) => {
+  const modo = req.query['hub.mode'];
+  const token = req.query['hub.verify_token'];
+  const desafio = req.query['hub.challenge'];
+  if (modo === 'subscribe' && process.env.WHATSAPP_VERIFY_TOKEN && token === process.env.WHATSAPP_VERIFY_TOKEN) {
+    return res.status(200).send(String(desafio || ''));
+  }
+  return res.sendStatus(403);
+});
+
+// Mensagens reais só são processadas quando a assinatura HMAC confere com o
+// App Secret. Assim uma chamada forjada não consegue criar leads no escritório.
+app.post('/webhooks/whatsapp', async (req, res) => {
+  if (!process.env.WHATSAPP_APP_SECRET) {
+    return res.status(503).json({ erro: 'integração WhatsApp ainda não configurada' });
+  }
+  if (!assinaturaValida(req.rawBody, req.headers['x-hub-signature-256'], process.env.WHATSAPP_APP_SECRET)) {
+    return res.sendStatus(401);
+  }
+  try {
+    const db = await load();
+    const resultado = aplicarWebhookWhatsApp(db, req.body);
+    if (!db.integracoes) db.integracoes = {};
+    db.integracoes.whatsapp = {
+      ...(db.integracoes.whatsapp || {}),
+      ultimoWebhookEm: new Date().toISOString(),
+    };
+    await save(db);
+    return res.status(200).json({ recebido: true });
+  } catch (erro) {
+    console.error('Erro ao processar webhook do WhatsApp:', erro);
+    return res.sendStatus(500);
+  }
+});
+
 // ---------- Rotina Documental (checklists por tipo de caso + envio pelo cliente) ----------
 const { CHECKLIST_TEMPLATES, TEMPLATE_POR_ID, ITEM_POR_CODIGO, CODIGOS_VALIDOS } = require('./checklists');
 const uploadRotina = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
@@ -339,6 +383,37 @@ app.post('/api/publico/rotina/:token/upload', uploadRotina.any(), async (req, re
 });
 
 app.use('/api', requireAuth);
+
+app.get('/api/whatsapp/status', async (req, res) => {
+  const db = await load();
+  const ultimaEntrada = (db.leads || [])
+    .map((lead) => lead.ultimaInteracaoEm)
+    .filter(Boolean)
+    .sort()
+    .at(-1) || null;
+  const configurado = !!(process.env.WHATSAPP_VERIFY_TOKEN && process.env.WHATSAPP_APP_SECRET);
+  const ultimoWebhookEm = db.integracoes && db.integracoes.whatsapp
+    ? db.integracoes.whatsapp.ultimoWebhookEm || null
+    : null;
+  res.json({
+    receptorPronto: true,
+    configurado,
+    conectado: !!(configurado && ultimoWebhookEm),
+    ultimoWebhookEm,
+    ultimaEntrada,
+    webhook: `${req.protocol}://${req.get('host')}/webhooks/whatsapp`,
+  });
+});
+
+app.post('/api/leads/:id/marcar-lidas', async (req, res) => {
+  const db = await load();
+  const lead = (db.leads || []).find((item) => item.id === Number(req.params.id));
+  if (!lead) return res.status(404).json({ erro: 'lead não encontrado' });
+  lead.naoLidas = 0;
+  auditar(req, db, 'marcou como lidas', 'leads', lead, lead.nome || '');
+  await save(db);
+  res.json({ ok: true });
+});
 
 app.get('/api/me', async (req, res) => {
   const db = await load();

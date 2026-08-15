@@ -6,7 +6,7 @@ const TIPOS_DOC = ['Petição', 'Procuração', 'Contrato', 'Documento Pessoal',
 const ETAPAS_LEAD = ['Novo lead', 'Em contato', 'Qualificado', 'Reunião', 'Proposta', 'Contrato', 'Aguardando documentos', 'Cliente ativo', 'Follow-up', 'Perdido'];
 const STATUS_TAREFA = ['A fazer', 'Em execução', 'Aguardando revisão', 'Concluída'];
 
-let state = { clientes: [], processos: [], eventos: [], documentos: [], checklistTemplates: [], usuarios: [], leads: [], tarefas: [], publicacoes: [], contratos: [], pagamentos: [], controladoria: { resumo: {}, itens: [] }, financeiro: {} };
+let state = { clientes: [], processos: [], eventos: [], documentos: [], checklistTemplates: [], usuarios: [], leads: [], tarefas: [], publicacoes: [], contratos: [], pagamentos: [], controladoria: { resumo: {}, itens: [] }, financeiro: {}, whatsapp: {} };
 let usuarioAtual = null;
 
 // ---------- API helpers ----------
@@ -41,12 +41,13 @@ async function carregarTudo() {
     api('/api/pagamentos'),
     api('/api/controladoria'),
     api('/api/financeiro'),
+    api('/api/whatsapp/status'),
   ];
   if (usuarioAtual && usuarioAtual.role === 'admin') chamadas.push(api('/api/usuarios'));
   const resultados = await Promise.all(chamadas);
-  const [clientes, processos, eventos, documentos, dashboard, checklistTemplates, leads, tarefas, publicacoes, contratos, pagamentos, controladoria, financeiro] = resultados;
-  const usuarios = usuarioAtual && usuarioAtual.role === 'admin' ? resultados[13] : [];
-  state = { clientes, processos, eventos, documentos, dashboard, checklistTemplates, leads, tarefas, publicacoes, contratos, pagamentos, controladoria, financeiro, usuarios: usuarios || [] };
+  const [clientes, processos, eventos, documentos, dashboard, checklistTemplates, leads, tarefas, publicacoes, contratos, pagamentos, controladoria, financeiro, whatsapp] = resultados;
+  const usuarios = usuarioAtual && usuarioAtual.role === 'admin' ? resultados[14] : [];
+  state = { clientes, processos, eventos, documentos, dashboard, checklistTemplates, leads, tarefas, publicacoes, contratos, pagamentos, controladoria, financeiro, whatsapp, usuarios: usuarios || [] };
   renderAll();
 }
 
@@ -81,6 +82,11 @@ function classStatus(s) {
 function moeda(valor) { return Number(valor || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }); }
 function dataBr(valor) { return valor ? new Date(valor + 'T00:00:00').toLocaleDateString('pt-BR') : '—'; }
 function riscoClasse(risco) { return `risco-${String(risco || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()}`; }
+function textoSeguro(valor) {
+  return String(valor == null ? '' : valor).replace(/[&<>"']/g, (caractere) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  })[caractere]);
+}
 
 // ---------- Navegação ----------
 document.querySelectorAll('.nav-item[data-view]').forEach((btn) => {
@@ -421,7 +427,40 @@ function copiarLinkRotina(link) {
 function renderLeads() {
   const board = document.getElementById('leads-board');
   if (!board) return;
-  board.innerHTML = ETAPAS_LEAD.map((etapa) => `<div class="kanban-col"><h4>${etapa} (${state.leads.filter((l) => l.etapa === etapa).length})</h4><div class="kanban-cards">${state.leads.filter((l) => l.etapa === etapa).map((l) => `<div class="kanban-card"><strong>${l.nome}</strong>${l.telefone ? `<a href="https://wa.me/55${l.telefone.replace(/\D/g, '')}" target="_blank">Abrir WhatsApp</a><br>` : ''}<small>${l.origem || 'Contato direto'}</small><br><button class="btn-icon" onclick="moverLead(${l.id})">Avançar</button></div>`).join('') || '<span class="card-label">Sem leads</span>'}</div></div>`).join('');
+  const status = document.getElementById('whatsapp-status');
+  if (status) {
+    status.className = `whatsapp-status ${state.whatsapp.conectado ? 'conectado' : 'pendente'}`;
+    status.innerHTML = state.whatsapp.conectado
+      ? `<strong>WhatsApp conectado à Meta</strong><span>${state.whatsapp.ultimaEntrada ? `Última mensagem recebida em ${new Date(state.whatsapp.ultimaEntrada).toLocaleString('pt-BR')}.` : 'Receptor ativo; aguardando a primeira mensagem.'}</span>`
+      : (state.whatsapp.configurado
+        ? '<strong>WhatsApp configurado</strong><span>Aguardando a primeira confirmação assinada enviada pela Meta.</span>'
+        : '<strong>Receptor instalado no CRM</strong><span>Falta concluir a vinculação no painel da Meta e cadastrar os dois segredos na Render.</span>');
+  }
+  board.innerHTML = ETAPAS_LEAD.map((etapa) => `<div class="kanban-col"><h4>${etapa} (${state.leads.filter((l) => l.etapa === etapa).length})</h4><div class="kanban-cards">${state.leads.filter((l) => l.etapa === etapa).map((l) => {
+    const telefone = telefoneWhatsApp(l.telefone);
+    const naoLidas = Number(l.naoLidas || 0);
+    return `<div class="kanban-card"><div class="lead-card-topo"><strong>${textoSeguro(l.nome)}</strong>${naoLidas ? `<span class="lead-unread">${naoLidas}</span>` : ''}</div>${l.ultimaMensagem ? `<div class="lead-preview">${textoSeguro(l.ultimaMensagem)}</div>` : ''}${telefone ? `<a href="https://wa.me/${telefone}" target="_blank" rel="noopener">Abrir WhatsApp</a><br>` : ''}<small>${textoSeguro(l.origem || 'Contato direto')}</small><div class="lead-actions">${Array.isArray(l.interacoes) && l.interacoes.length ? `<button class="btn-icon" onclick="abrirHistoricoLead(${l.id})">Histórico</button>` : ''}<button class="btn-icon" onclick="moverLead(${l.id})">Avançar</button></div></div>`;
+  }).join('') || '<span class="card-label">Sem leads</span>'}</div></div>`).join('');
+}
+
+function telefoneWhatsApp(valor) {
+  const digitos = String(valor || '').replace(/\D/g, '');
+  if (!digitos) return '';
+  return digitos.startsWith('55') && digitos.length >= 12 ? digitos : `55${digitos}`;
+}
+
+function abrirHistoricoLead(id) {
+  const lead = state.leads.find((item) => item.id === id);
+  if (!lead) return;
+  const interacoes = [...(lead.interacoes || [])].sort((a, b) => String(b.criadoEm).localeCompare(String(a.criadoEm)));
+  modalBox.innerHTML = `<h3>Conversas — ${textoSeguro(lead.nome)}</h3><div class="conversation-list">${interacoes.map((item) => `<div class="conversation-item ${item.direcao === 'saida' ? 'saida' : 'entrada'}"><div>${textoSeguro(item.texto || `[${item.tipo || 'mensagem'}]`)}</div><small>${item.criadoEm ? new Date(item.criadoEm).toLocaleString('pt-BR') : ''}${item.status ? ` · ${textoSeguro(item.status)}` : ''}</small></div>`).join('') || '<p>Nenhuma conversa registrada.</p>'}</div><div class="modal-actions"><button class="btn-secondary" onclick="fecharModal()">Fechar</button>${Number(lead.naoLidas || 0) ? `<button class="btn-primary" onclick="marcarLeadComoLido(${lead.id})">Marcar como lidas</button>` : ''}</div>`;
+  overlay.classList.add('active');
+}
+
+async function marcarLeadComoLido(id) {
+  await api(`/api/leads/${id}/marcar-lidas`, { method: 'POST' });
+  fecharModal();
+  await carregarTudo();
 }
 
 function renderTarefas() {

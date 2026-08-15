@@ -24,6 +24,7 @@ const EMPTY_DB = {
   publicacoes: [],
   contratos: [],
   pagamentos: [],
+  integracoes: {},
 };
 
 let tabelasProntas = null;
