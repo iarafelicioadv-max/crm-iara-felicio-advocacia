@@ -4,6 +4,18 @@ Sistema de gestão para o escritório: Dashboard, Quadro Kanban, Processos, Cale
 
 **Endereço em produção:** https://crm-iara-felicio-advocacia.onrender.com
 
+## Versão operacional V3
+
+- Controladoria por exceção: prazos, publicações, cadastros, documentos e financeiro.
+- Tarefas com responsável, prazo fatal/interno, evidência de conclusão e revisão.
+- Central de publicações para TJMG, TRT-3, TRF-6 e DJEN/CNJ, com conciliação pelo número CNJ.
+- Financeiro com contratos, recebimentos, vencidos e projeções de 30, 60 e 90 dias.
+- Funil de leads com atalho para WhatsApp.
+- Rotina documental preservada, incluindo os 42 checklists por tipo de caso e link de envio ao cliente.
+- Dados e documentos persistidos em PostgreSQL/Neon.
+
+A consulta automática ao DJEN e a entrada automática de leads pelo WhatsApp dependem de integrações oficiais externas. O CRM já contém os fluxos de conciliação e tratamento, sem simular conexões não configuradas.
+
 ## 1. Login
 
 Cada pessoa da equipe tem seu próprio e-mail e senha. No primeiro acesso, o sistema pede para trocar a senha temporária por uma definitiva.

@@ -1,16 +1,15 @@
 const express = require('express');
 const multer = require('multer');
 const path = require('path');
-const fs = require('fs');
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const cookieSession = require('cookie-session');
-const { load, save, nextId, registrarAuditoria } = require('./db');
+const { load, save, nextId, salvarArquivo, buscarArquivo, removerArquivo } = require('./db');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-app.use(express.json());
+app.use(express.json({ limit: '15mb' }));
 
 app.use(
   cookieSession({
@@ -21,35 +20,10 @@ app.use(
   })
 );
 
-const uploadsDir = path.join(__dirname, 'uploads_privados');
-if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024 } });
 
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, uploadsDir),
-  filename: (req, file, cb) => {
-    const unique = Date.now() + '-' + Math.round(Math.random() * 1e9);
-    cb(null, unique + path.extname(file.originalname));
-  },
-});
-const TIPOS_ARQUIVO_PERMITIDOS = new Set([
-  'application/pdf', 'application/msword',
-  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-  'image/jpeg', 'image/png',
-]);
-const upload = multer({
-  storage,
-  limits: { fileSize: 10 * 1024 * 1024 },
-  fileFilter: (req, file, cb) => TIPOS_ARQUIVO_PERMITIDOS.has(file.mimetype)
-    ? cb(null, true) : cb(new Error('Envie apenas PDF, DOC, DOCX, JPG ou PNG.')),
-});
-
-function auditar(req, db, acao, recurso, item, detalhes) {
-  const usuario = (db.usuarios || []).find((u) => u.id === req.session.userId);
-  registrarAuditoria(db, { usuarioId: req.session.userId, usuarioNome: usuario ? usuario.nome : 'Usuário removido', acao, recurso, recursoId: item && item.id, detalhes });
-}
-
-function ensureAdminSeed() {
-  const db = load();
+async function ensureAdminSeed() {
+  const db = await load();
   if (!db.usuarios) db.usuarios = [];
   if (db.usuarios.length === 0) {
     const email = process.env.ADMIN_EMAIL || 'iarafelicio.adv@gmail.com';
@@ -64,14 +38,13 @@ function ensureAdminSeed() {
       criadoEm: new Date().toISOString(),
     };
     db.usuarios.push(admin);
-    save(db);
+    await save(db);
     console.log('=== Usuário admin inicial criado ===');
     console.log('E-mail:', email);
     if (!process.env.ADMIN_INITIAL_PASSWORD) console.log('Senha temporária:', senhaInicial);
     console.log('=====================================');
   }
 }
-ensureAdminSeed();
 
 function requireAuth(req, res, next) {
   if (req.session && req.session.userId) return next();
@@ -82,8 +55,24 @@ function requireAdmin(req, res, next) {
   res.status(403).json({ erro: 'apenas administradores podem fazer isso' });
 }
 
-app.post('/api/login', (req, res) => {
-  const db = load();
+function auditar(req, db, acao, recurso, item, detalhes) {
+  if (!db.auditoria) db.auditoria = [];
+  const usuario = (db.usuarios || []).find((u) => u.id === req.session.userId);
+  db.auditoria.push({
+    id: nextId(db.auditoria),
+    usuarioId: req.session.userId || null,
+    usuarioNome: usuario ? usuario.nome : 'Sistema',
+    acao,
+    recurso,
+    recursoId: item && item.id ? item.id : null,
+    detalhes: detalhes || '',
+    criadoEm: new Date().toISOString(),
+  });
+  if (db.auditoria.length > 1000) db.auditoria = db.auditoria.slice(-1000);
+}
+
+app.post('/api/login', async (req, res) => {
+  const db = await load();
   const { email, senha } = req.body;
   const user = (db.usuarios || []).find((u) => u.email.toLowerCase() === String(email || '').toLowerCase());
   if (!user || !bcrypt.compareSync(String(senha || ''), user.senhaHash)) {
@@ -99,17 +88,267 @@ app.post('/api/logout', (req, res) => {
   res.json({ ok: true });
 });
 
+// ---------- sincronização automática (Google Drive / Google Agenda) ----------
+function requireSyncKey(req, res, next) {
+  const chave = req.headers['x-sync-key'];
+  if (!process.env.SYNC_API_KEY || chave !== process.env.SYNC_API_KEY) {
+    return res.status(401).json({ erro: 'chave de sincronização inválida' });
+  }
+  next();
+}
+
+function mapStatusPlanilha(statusTexto) {
+  const s = String(statusTexto || '').toLowerCase();
+  if (s.includes('conclu')) return 'Concluído';
+  if (s.includes('sentença') || s.includes('sentenca') || s.includes('aguard')) return 'Aguardando';
+  if (s.includes('inicial') || s.includes('novo')) return 'Novo';
+  return 'Em Andamento';
+}
+
+function mapAreaPlanilha(acaoTexto) {
+  const a = String(acaoTexto || '').toLowerCase();
+  if (a.includes('previdenci') || a.includes('inss') || a.includes('benefício')) return 'Previdenciário';
+  if (a.includes('trabalh')) return 'Trabalhista';
+  if (a.includes('família') || a.includes('familia') || a.includes('divórcio') || a.includes('divorcio')) return 'Família';
+  if (a.includes('crime') || a.includes('criminal')) return 'Criminal';
+  if (a.includes('tribut')) return 'Tributário';
+  return 'Cível';
+}
+
+app.post('/api/sync/clientes-processos', requireSyncKey, async (req, res) => {
+  const db = await load();
+  const registros = Array.isArray(req.body.registros) ? req.body.registros : [];
+  let clientesCriados = 0;
+  let clientesAtualizados = 0;
+  let processosCriados = 0;
+  let processosAtualizados = 0;
+
+  registros.forEach((r) => {
+    if (!r.cliente) return;
+    let cliente = db.clientes.find((c) => c.nome && c.nome.trim().toLowerCase() === String(r.cliente).trim().toLowerCase());
+    if (!cliente) {
+      cliente = { id: nextId(db.clientes), nome: r.cliente, criadoEm: new Date().toISOString() };
+      db.clientes.push(cliente);
+      clientesCriados++;
+    } else {
+      clientesAtualizados++;
+    }
+
+    if (r.numero || r.acao) {
+      let processo = null;
+      if (r.numero) processo = db.processos.find((p) => p.numeroProcesso === r.numero);
+      if (!processo && r.acao) processo = db.processos.find((p) => p.nome === r.acao && p.clienteId === cliente.id);
+
+      const dadosProcesso = {
+        nome: r.acao || r.numero || 'Processo',
+        numeroProcesso: r.numero || null,
+        clienteId: cliente.id,
+        area: mapAreaPlanilha(r.acao),
+        tipo: 'Ação Ordinária',
+        status: mapStatusPlanilha(r.status),
+        pastaDocumentos: r.pastaDocumentos || null,
+      };
+
+      if (!processo) {
+        processo = { id: nextId(db.processos), criadoEm: new Date().toISOString(), ...dadosProcesso };
+        db.processos.push(processo);
+        processosCriados++;
+      } else {
+        Object.assign(processo, dadosProcesso);
+        processosAtualizados++;
+      }
+    }
+  });
+
+  await save(db);
+  res.json({ clientesCriados, clientesAtualizados, processosCriados, processosAtualizados });
+});
+
+app.post('/api/sync/documento', requireSyncKey, async (req, res) => {
+  const db = await load();
+  const { pastaDocumentos, nomeOriginal, tipo, conteudoBase64, mimetype } = req.body;
+  if (!pastaDocumentos || !nomeOriginal || !conteudoBase64) {
+    return res.status(400).json({ erro: 'pastaDocumentos, nomeOriginal e conteudoBase64 são obrigatórios' });
+  }
+
+  const processo = db.processos.find((p) => p.pastaDocumentos && p.pastaDocumentos.trim().toLowerCase() === String(pastaDocumentos).trim().toLowerCase());
+  if (!processo) {
+    return res.status(404).json({ erro: 'nenhum processo vinculado a essa pasta de documentos' });
+  }
+
+  const jaExiste = db.documentos.find((d) => d.processoId === processo.id && d.nomeOriginal === nomeOriginal);
+  if (jaExiste) {
+    return res.json({ ignorado: true, motivo: 'documento já importado anteriormente' });
+  }
+
+  const buffer = Buffer.from(conteudoBase64, 'base64');
+  const idArquivo = await salvarArquivo(buffer, nomeOriginal, mimetype);
+
+  const item = {
+    id: nextId(db.documentos),
+    nome: nomeOriginal,
+    clienteId: processo.clienteId,
+    processoId: processo.id,
+    tipo: tipo || 'Outro',
+    arquivo: '/uploads/' + idArquivo,
+    nomeOriginal,
+    criadoEm: new Date().toISOString(),
+    origem: 'sync-drive',
+  };
+  db.documentos.push(item);
+  await save(db);
+  res.status(201).json({ id: item.id });
+});
+
+// Sincroniza eventos do Google Agenda para o Calendário do CRM.
+app.post('/api/sync/calendario', requireSyncKey, async (req, res) => {
+  const db = await load();
+  const eventosGoogle = Array.isArray(req.body.eventos) ? req.body.eventos : [];
+  let criados = 0;
+  let atualizados = 0;
+
+  eventosGoogle.forEach((e) => {
+    if (!e.googleEventId || !e.data) return;
+    let evento = db.eventos.find((ev) => ev.googleEventId === e.googleEventId);
+    const dados = {
+      titulo: e.titulo || 'Compromisso',
+      data: e.data,
+      hora: e.hora || null,
+      tipo: e.tipo || 'Compromisso',
+      processoId: e.processoId || null,
+      googleEventId: e.googleEventId,
+      origem: 'google-agenda',
+    };
+    if (!evento) {
+      evento = { id: nextId(db.eventos), criadoEm: new Date().toISOString(), ...dados };
+      db.eventos.push(evento);
+      criados++;
+    } else {
+      Object.assign(evento, dados);
+      atualizados++;
+    }
+  });
+
+  // remove da lista os eventos vindos da Agenda que não vieram mais nesta sincronização
+  // (ou seja, foram apagados/cancelados no Google Agenda) — só afeta eventos com origem google-agenda.
+  if (req.body.idsAtuais && Array.isArray(req.body.idsAtuais)) {
+    const idsAtuais = new Set(req.body.idsAtuais);
+    db.eventos = db.eventos.filter((ev) => ev.origem !== 'google-agenda' || idsAtuais.has(ev.googleEventId));
+  }
+
+  await save(db);
+  res.json({ criados, atualizados });
+});
+
+// ---------- Rotina Documental (checklists por tipo de caso + envio pelo cliente) ----------
+const { CHECKLIST_TEMPLATES, TEMPLATE_POR_ID, ITEM_POR_CODIGO, CODIGOS_VALIDOS } = require('./checklists');
+const uploadRotina = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
+
+// Tipos de caso ativos de um cliente. Se o cliente ainda não teve nenhum tipo de caso
+// escolhido (clientes cadastrados antes desta funcionalidade), cai no checklist Genérico,
+// mantendo o comportamento anterior.
+function tiposCasoAtivos(cliente) {
+  const tipos = Array.isArray(cliente.tiposCaso) ? cliente.tiposCaso.filter((id) => TEMPLATE_POR_ID[id]) : [];
+  return tipos.length ? tipos : ['GEN'];
+}
+
+// Monta o checklist completo de um cliente, combinando os itens de todos os tipos de
+// caso escolhidos para ele, e marcando quais foram SOLICITADOS (cliente.documentosSolicitados
+// — se vazio/ausente, considera todos solicitados, para manter compatibilidade com clientes
+// já cadastrados) e quais já foram ENVIADOS pelo cliente.
+function checklistCompleto(db, cliente) {
+  const enviados = db.documentos.filter((d) => d.clienteId === cliente.id && d.categoriaPOP);
+  const lista = Array.isArray(cliente.documentosSolicitados) ? cliente.documentosSolicitados : [];
+  const setSolicitados = lista.length ? new Set(lista) : null;
+  const tipos = tiposCasoAtivos(cliente);
+  const itens = [];
+  for (const tipoId of tipos) {
+    const template = TEMPLATE_POR_ID[tipoId];
+    if (!template) continue;
+    for (const item of template.itens) {
+      const doc = enviados.find((d) => d.categoriaPOP === item.codigo);
+      itens.push({
+        ...item,
+        templateId: template.id,
+        templateTitulo: template.titulo,
+        solicitado: setSolicitados ? setSolicitados.has(item.codigo) : true,
+        enviado: !!doc,
+        documentoId: doc ? doc.id : null,
+        arquivo: doc ? doc.arquivo : null,
+        nomeOriginal: doc ? doc.nomeOriginal : null,
+        enviadoEm: doc ? doc.criadoEm : null,
+      });
+    }
+  }
+  return itens;
+}
+
+// Orientações de relato dos tipos de caso ativos de um cliente (para exibir na página
+// pública, orientando o que o cliente deve contar sobre a situação dele).
+function orientacoesRelato(cliente) {
+  return tiposCasoAtivos(cliente)
+    .map((id) => TEMPLATE_POR_ID[id])
+    .filter((t) => t && t.orientacaoRelato)
+    .map((t) => ({ titulo: t.titulo, texto: t.orientacaoRelato }));
+}
+
+// Público: dados do cliente + checklist, a partir do link enviado ao cliente (sem login)
+// O link é gerado por CLIENTE (não por processo), pois o processo só é criado depois que
+// toda a documentação for reunida. Só mostra ao cliente os documentos SOLICITADOS.
+app.get('/api/publico/rotina/:token', async (req, res) => {
+  const db = await load();
+  const cliente = db.clientes.find((c) => c.uploadToken === req.params.token);
+  if (!cliente) return res.status(404).json({ erro: 'link inválido ou expirado' });
+  res.json({
+    clienteNome: cliente.nome || '',
+    orientacoes: orientacoesRelato(cliente),
+    checklist: checklistCompleto(db, cliente).filter((item) => item.solicitado),
+  });
+});
+
+// Público: recebe os arquivos enviados pelo cliente pelo link
+app.post('/api/publico/rotina/:token/upload', uploadRotina.any(), async (req, res) => {
+  const db = await load();
+  const cliente = db.clientes.find((c) => c.uploadToken === req.params.token);
+  if (!cliente) return res.status(404).json({ erro: 'link inválido ou expirado' });
+
+  let salvos = 0;
+  for (const file of req.files || []) {
+    const codigo = file.fieldname;
+    if (!CODIGOS_VALIDOS.has(codigo)) continue;
+    const item = ITEM_POR_CODIGO[codigo];
+    const idArquivo = await salvarArquivo(file.buffer, file.originalname, file.mimetype);
+    const doc = {
+      id: nextId(db.documentos),
+      nome: item.rotulo,
+      clienteId: cliente.id,
+      processoId: null,
+      tipo: item.rotulo,
+      categoriaPOP: codigo,
+      arquivo: '/uploads/' + idArquivo,
+      nomeOriginal: file.originalname,
+      criadoEm: new Date().toISOString(),
+      origem: 'cliente-rotina',
+      visto: false,
+    };
+    db.documentos.push(doc);
+    salvos++;
+  }
+  await save(db);
+  res.json({ ok: true, salvos });
+});
+
 app.use('/api', requireAuth);
 
-app.get('/api/me', (req, res) => {
-  const db = load();
+app.get('/api/me', async (req, res) => {
+  const db = await load();
   const user = (db.usuarios || []).find((u) => u.id === req.session.userId);
   if (!user) return res.status(401).json({ erro: 'sessão inválida' });
   res.json({ id: user.id, nome: user.nome, email: user.email, role: user.role, precisaTrocarSenha: !!user.precisaTrocarSenha });
 });
 
-app.post('/api/trocar-senha', (req, res) => {
-  const db = load();
+app.post('/api/trocar-senha', async (req, res) => {
+  const db = await load();
   const user = (db.usuarios || []).find((u) => u.id === req.session.userId);
   const { senhaAtual, novaSenha } = req.body;
   if (!user || !bcrypt.compareSync(String(senhaAtual || ''), user.senhaHash)) {
@@ -120,17 +359,17 @@ app.post('/api/trocar-senha', (req, res) => {
   }
   user.senhaHash = bcrypt.hashSync(novaSenha, 10);
   user.precisaTrocarSenha = false;
-  save(db);
+  await save(db);
   res.json({ ok: true });
 });
 
-app.get('/api/usuarios', requireAdmin, (req, res) => {
-  const db = load();
+app.get('/api/usuarios', requireAdmin, async (req, res) => {
+  const db = await load();
   res.json((db.usuarios || []).map((u) => ({ id: u.id, nome: u.nome, email: u.email, role: u.role, precisaTrocarSenha: !!u.precisaTrocarSenha })));
 });
 
-app.post('/api/usuarios', requireAdmin, (req, res) => {
-  const db = load();
+app.post('/api/usuarios', requireAdmin, async (req, res) => {
+  const db = await load();
   if (!db.usuarios) db.usuarios = [];
   const { nome, email, senha, role } = req.body;
   if (!nome || !email || !senha) return res.status(400).json({ erro: 'nome, e-mail e senha são obrigatórios' });
@@ -147,113 +386,387 @@ app.post('/api/usuarios', requireAdmin, (req, res) => {
     criadoEm: new Date().toISOString(),
   };
   db.usuarios.push(novo);
-  save(db);
+  await save(db);
   res.status(201).json({ id: novo.id });
 });
 
-app.delete('/api/usuarios/:id', requireAdmin, (req, res) => {
-  const db = load();
+app.delete('/api/usuarios/:id', requireAdmin, async (req, res) => {
+  const db = await load();
   if ((db.usuarios || []).length <= 1) return res.status(400).json({ erro: 'não é possível remover o único usuário do sistema' });
   if (Number(req.params.id) === req.session.userId) return res.status(400).json({ erro: 'você não pode remover seu próprio usuário' });
   db.usuarios = db.usuarios.filter((u) => u.id !== Number(req.params.id));
-  save(db);
+  await save(db);
   res.json({ removido: true });
 });
 
 function crud(resource) {
   const base = `/api/${resource}`;
 
-  app.get(base, (req, res) => {
-    const db = load();
+  app.get(base, async (req, res) => {
+    const db = await load();
     res.json(db[resource]);
   });
 
-  app.get(`${base}/:id`, (req, res) => {
-    const db = load();
+  app.get(`${base}/:id`, async (req, res) => {
+    const db = await load();
     const item = db[resource].find((i) => i.id === Number(req.params.id));
     if (!item) return res.status(404).json({ erro: 'não encontrado' });
     res.json(item);
   });
 
-  app.post(base, (req, res) => {
-    const db = load();
+  app.post(base, async (req, res) => {
+    const db = await load();
     const item = { id: nextId(db[resource]), criadoEm: new Date().toISOString(), ...req.body };
     if (resource === 'clientes' && !String(item.nome || '').trim()) return res.status(400).json({ erro: 'nome do cliente é obrigatório' });
     if (resource === 'processos' && !String(item.nome || '').trim()) return res.status(400).json({ erro: 'nome ou número do processo é obrigatório' });
     if (resource === 'eventos' && (!String(item.titulo || '').trim() || !item.data)) return res.status(400).json({ erro: 'título e data do evento são obrigatórios' });
+    if (resource === 'leads' && !String(item.nome || '').trim()) return res.status(400).json({ erro: 'nome do lead é obrigatório' });
+    if (resource === 'tarefas' && !String(item.titulo || '').trim()) return res.status(400).json({ erro: 'título da tarefa é obrigatório' });
+    if (resource === 'contratos' && (!item.clienteId || !String(item.descricao || '').trim() || Number(item.valorTotal) <= 0)) return res.status(400).json({ erro: 'cliente, descrição e valor do contrato são obrigatórios' });
+    if (resource === 'pagamentos' && (!item.data || Number(item.valor) <= 0)) return res.status(400).json({ erro: 'data e valor do pagamento são obrigatórios' });
+    if (resource === 'processos') item.numeroNormalizado = String(item.numeroProcesso || item.nome || '').replace(/\D/g, '');
     db[resource].push(item);
-    auditar(req, db, 'criou', resource, item, item.nome || item.titulo || '');
-    save(db);
+    auditar(req, db, 'criou', resource, item, item.nome || item.titulo || item.descricao || '');
+    await save(db);
     res.status(201).json(item);
   });
 
-  app.put(`${base}/:id`, (req, res) => {
-    const db = load();
+  app.put(`${base}/:id`, async (req, res) => {
+    const db = await load();
     const idx = db[resource].findIndex((i) => i.id === Number(req.params.id));
     if (idx === -1) return res.status(404).json({ erro: 'não encontrado' });
     db[resource][idx] = { ...db[resource][idx], ...req.body, id: Number(req.params.id) };
-    auditar(req, db, 'atualizou', resource, db[resource][idx], db[resource][idx].nome || db[resource][idx].titulo || '');
-    save(db);
+    if (resource === 'processos') db[resource][idx].numeroNormalizado = String(db[resource][idx].numeroProcesso || db[resource][idx].nome || '').replace(/\D/g, '');
+    if (resource === 'tarefas' && db[resource][idx].status === 'Concluída' && !String(db[resource][idx].evidencia || '').trim()) return res.status(400).json({ erro: 'registre a evidência antes de concluir a tarefa' });
+    auditar(req, db, 'atualizou', resource, db[resource][idx], db[resource][idx].nome || db[resource][idx].titulo || db[resource][idx].descricao || '');
+    await save(db);
     res.json(db[resource][idx]);
   });
 
-  app.delete(`${base}/:id`, (req, res) => {
-    const db = load();
-    const item = db[resource].find((i) => i.id === Number(req.params.id));
-    if (!item) return res.status(404).json({ erro: 'não encontrado' });
-    if (resource === 'clientes' && (db.processos || []).some((p) => p.clienteId === item.id)) return res.status(400).json({ erro: 'este cliente possui processos vinculados; desvincule-os antes de excluir' });
-    if (resource === 'processos' && (db.eventos || []).some((e) => e.processoId === item.id)) return res.status(400).json({ erro: 'este processo possui eventos vinculados; desvincule-os antes de excluir' });
+  app.delete(`${base}/:id`, async (req, res) => {
+    const db = await load();
     const before = db[resource].length;
+    const item = db[resource].find((i) => i.id === Number(req.params.id));
     db[resource] = db[resource].filter((i) => i.id !== Number(req.params.id));
-    auditar(req, db, 'removeu', resource, item, item.nome || item.titulo || '');
-    save(db);
+    if (item) auditar(req, db, 'removeu', resource, item, item.nome || item.titulo || item.descricao || '');
+    await save(db);
     res.json({ removido: before !== db[resource].length });
   });
 }
 
-['clientes', 'processos', 'eventos'].forEach(crud);
+['clientes', 'processos', 'eventos', 'leads', 'tarefas', 'contratos', 'pagamentos'].forEach(crud);
 
-app.get('/api/documentos', (req, res) => {
-  const db = load();
-  res.json(db.documentos);
+app.post('/api/tarefas/:id/concluir', async (req, res) => {
+  const db = await load();
+  const tarefa = (db.tarefas || []).find((t) => t.id === Number(req.params.id));
+  if (!tarefa) return res.status(404).json({ erro: 'tarefa não encontrada' });
+  const evidencia = String(req.body.evidencia || '').trim();
+  if (!evidencia) return res.status(400).json({ erro: 'registre a evidência antes de concluir a tarefa' });
+  tarefa.status = req.body.enviarParaRevisao ? 'Aguardando revisão' : 'Concluída';
+  tarefa.evidencia = evidencia;
+  tarefa.concluidaEm = new Date().toISOString();
+  tarefa.concluidaPorId = req.session.userId;
+  auditar(req, db, 'concluiu', 'tarefa', tarefa, `Evidência registrada: ${evidencia.slice(0, 120)}`);
+  await save(db);
+  res.json(tarefa);
 });
 
-app.post('/api/documentos', upload.single('arquivo'), (req, res) => {
-  const db = load();
-  const item = {
-    id: nextId(db.documentos),
-    nome: req.body.nome || (req.file ? req.file.originalname : 'Documento'),
-    clienteId: req.body.clienteId ? Number(req.body.clienteId) : null,
-    processoId: req.body.processoId ? Number(req.body.processoId) : null,
-    tipo: req.body.tipo || 'Outro',
-    arquivo: req.file ? '/uploads/' + req.file.filename : null,
-    nomeOriginal: req.file ? req.file.originalname : null,
-    criadoEm: new Date().toISOString(),
+app.post('/api/tarefas/:id/revisar', async (req, res) => {
+  const db = await load();
+  const tarefa = (db.tarefas || []).find((t) => t.id === Number(req.params.id));
+  if (!tarefa) return res.status(404).json({ erro: 'tarefa não encontrada' });
+  if (!String(tarefa.evidencia || '').trim()) return res.status(400).json({ erro: 'não é possível revisar sem evidência' });
+  tarefa.status = 'Concluída';
+  tarefa.revisadoEm = new Date().toISOString();
+  tarefa.revisadoPorId = req.session.userId;
+  tarefa.observacaoRevisao = String(req.body.observacao || '').trim();
+  auditar(req, db, 'revisou', 'tarefa', tarefa, tarefa.observacaoRevisao || 'Revisão aprovada');
+  await save(db);
+  res.json(tarefa);
+});
+
+function dataHoje() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function numero(valor) {
+  const n = Number(valor);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function calcularControladoria(db) {
+  const hoje = dataHoje();
+  const itens = [];
+  const adicionar = (tipo, risco, titulo, acao, referencia, fonte, evidencia, confianca = 'Alta') => {
+    itens.push({ id: `${tipo}-${referencia || itens.length + 1}`, tipo, risco, titulo, acao, referencia: referencia || null, fonte, evidencia, confianca });
   };
-  db.documentos.push(item);
-  auditar(req, db, 'incluiu', 'documento', item, item.nome);
-  save(db);
+
+  (db.tarefas || []).forEach((t) => {
+    if (t.status !== 'Concluída' && t.prazo && t.prazo < hoje) adicionar('Prazo', 'Crítico', `Tarefa vencida: ${t.titulo}`, 'Revisar o prazo, executar e registrar evidência.', t.id, 'Tarefas', `Prazo cadastrado: ${t.prazo}`);
+    if (t.status === 'Concluída' && !String(t.evidencia || '').trim()) adicionar('Evidência', 'Alto', `Conclusão sem evidência: ${t.titulo}`, 'Anexar ou descrever a evidência da conclusão.', t.id, 'Tarefas', 'Status concluído sem comprovação');
+  });
+
+  (db.publicacoes || []).forEach((p) => {
+    if (!p.processoId) adicionar('Conciliação', 'Crítico', 'Publicação sem processo conciliado', 'Localizar o processo pelo número CNJ e vincular antes de tratar.', p.id, p.tribunal || 'Publicações', p.numeroProcesso || p.descricao, 'Média');
+    if (p.status === 'Nova') adicionar('Publicação', p.prazoFatal ? 'Crítico' : 'Alto', `Publicação não tratada: ${p.descricao}`, 'Conferir a fonte oficial e criar tarefa com responsável.', p.id, p.tribunal || 'Publicações', `Publicada em ${p.dataPublicacao}${p.prazoFatal ? `; prazo ${p.prazoFatal}` : ''}`);
+  });
+
+  (db.processos || []).forEach((p) => {
+    const faltantes = [];
+    if (!p.clienteId) faltantes.push('cliente');
+    if (!p.area) faltantes.push('área');
+    if (!p.status) faltantes.push('status');
+    if (!String(p.numeroProcesso || p.nome || '').match(/\d/)) faltantes.push('número CNJ');
+    if (faltantes.length) adicionar('Cadastro', 'Médio', `Processo com cadastro incompleto: ${p.nome || `#${p.id}`}`, `Preencher ${faltantes.join(', ')}.`, p.id, 'Processos', `Campos ausentes: ${faltantes.join(', ')}`);
+  });
+
+  (db.clientes || []).forEach((cliente) => {
+    const pendentes = checklistCompleto(db, cliente).filter((item) => item.solicitado && !item.enviado);
+    if (pendentes.length) adicionar('Documentos', 'Alto', `Documentação pendente: ${cliente.nome}`, `Acompanhar os ${pendentes.length} item(ns) solicitados no link do cliente.`, cliente.id, 'Rotina Documental', pendentes.slice(0, 3).map((p) => p.rotulo).join('; ') + (pendentes.length > 3 ? '…' : ''), 'Alta');
+  });
+
+  (db.contratos || []).forEach((c) => {
+    if (c.status !== 'Cancelado' && !(db.pagamentos || []).some((p) => p.contratoId === c.id)) adicionar('Financeiro', 'Médio', `Contrato sem recebimento: ${c.descricao || `#${c.id}`}`, 'Conferir vencimento e iniciar acompanhamento de cobrança.', c.id, 'Contratos x pagamentos', `Valor contratado: ${numero(c.valorTotal).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}`);
+  });
+  (db.pagamentos || []).forEach((p) => {
+    if (!p.contratoId) adicionar('Financeiro', 'Alto', `Pagamento sem contrato: ${p.descricao || `#${p.id}`}`, 'Identificar o contrato e conciliar o recebimento.', p.id, 'Pagamentos', `Valor: ${numero(p.valor).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}`);
+  });
+
+  const ordem = { 'Crítico': 0, Alto: 1, 'Médio': 2, Baixo: 3 };
+  return itens.sort((a, b) => ordem[a.risco] - ordem[b.risco]);
+}
+
+function calcularFinanceiro(db) {
+  const hoje = dataHoje();
+  const contratos = db.contratos || [];
+  const pagamentos = db.pagamentos || [];
+  const totalContratado = contratos.filter((c) => c.status !== 'Cancelado').reduce((s, c) => s + numero(c.valorTotal), 0);
+  const totalRecebido = pagamentos.reduce((s, p) => s + numero(p.valor), 0);
+  const contratosDetalhados = contratos.map((c) => {
+    const recebido = pagamentos.filter((p) => p.contratoId === c.id).reduce((s, p) => s + numero(p.valor), 0);
+    const saldo = Math.max(0, numero(c.valorTotal) - recebido);
+    return { ...c, recebido, saldo, vencido: !!(saldo > 0 && c.proximoVencimento && c.proximoVencimento < hoje) };
+  });
+  const projetar = (dias) => {
+    const limite = new Date();
+    limite.setDate(limite.getDate() + dias);
+    const limiteStr = limite.toISOString().slice(0, 10);
+    return contratosDetalhados.filter((c) => c.saldo > 0 && c.proximoVencimento && c.proximoVencimento >= hoje && c.proximoVencimento <= limiteStr).reduce((s, c) => s + c.saldo, 0);
+  };
+  return {
+    totalContratado,
+    totalRecebido,
+    totalRecebidoConciliado: pagamentos.filter((p) => p.contratoId && contratos.some((c) => c.id === p.contratoId)).reduce((s, p) => s + numero(p.valor), 0),
+    aReceber: contratosDetalhados.reduce((s, c) => s + c.saldo, 0),
+    vencido: contratosDetalhados.filter((c) => c.vencido).reduce((s, c) => s + c.saldo, 0),
+    projecao30: projetar(30), projecao60: projetar(60), projecao90: projetar(90),
+    contratos: contratosDetalhados,
+    pagamentosSemContrato: pagamentos.filter((p) => !p.contratoId),
+  };
+}
+
+app.get('/api/controladoria', async (req, res) => {
+  const itens = calcularControladoria(await load());
+  res.json({ resumo: { total: itens.length, criticos: itens.filter((i) => i.risco === 'Crítico').length, altos: itens.filter((i) => i.risco === 'Alto').length, medios: itens.filter((i) => i.risco === 'Médio').length }, itens });
+});
+
+app.get('/api/financeiro', async (req, res) => res.json(calcularFinanceiro(await load())));
+
+app.get('/api/publicacoes', async (req, res) => {
+  const db = await load();
+  res.json([...(db.publicacoes || [])].sort((a, b) => new Date(b.dataPublicacao) - new Date(a.dataPublicacao)));
+});
+
+app.post('/api/publicacoes', async (req, res) => {
+  const db = await load();
+  let { processoId, numeroProcesso, descricao, dataPublicacao, prazoFatal, tribunal, origem } = req.body;
+  if (!descricao || !dataPublicacao) return res.status(400).json({ erro: 'descrição e data da publicação são obrigatórias' });
+  if (!processoId && numeroProcesso) {
+    const normalizado = String(numeroProcesso).replace(/\D/g, '');
+    const encontrado = normalizado ? (db.processos || []).find((p) => String(p.numeroNormalizado || p.numeroProcesso || p.nome || '').replace(/\D/g, '') === normalizado) : null;
+    if (encontrado) processoId = encontrado.id;
+  }
+  const item = {
+    id: nextId(db.publicacoes), processoId: processoId ? Number(processoId) : null,
+    numeroProcesso: String(numeroProcesso || '').trim() || null,
+    numeroNormalizado: String(numeroProcesso || '').replace(/\D/g, '') || null,
+    descricao, dataPublicacao, prazoFatal: prazoFatal || null,
+    tribunal: tribunal || 'TJMG', origem: origem || 'Registro manual', status: 'Nova', criadoEm: new Date().toISOString(),
+  };
+  db.publicacoes.push(item);
+  auditar(req, db, 'registrou', 'publicação', item, descricao);
+  await save(db);
   res.status(201).json(item);
 });
 
-app.delete('/api/documentos/:id', (req, res) => {
-  const db = load();
+app.post('/api/publicacoes/:id/criar-tarefa', async (req, res) => {
+  const db = await load();
+  const publicacao = (db.publicacoes || []).find((p) => p.id === Number(req.params.id));
+  if (!publicacao) return res.status(404).json({ erro: 'publicação não encontrada' });
+  if (!publicacao.processoId) return res.status(400).json({ erro: 'vincule a publicação a um processo antes de criar a tarefa' });
+  const processo = (db.processos || []).find((p) => p.id === publicacao.processoId);
+  const tarefa = {
+    id: nextId(db.tarefas), titulo: `Providenciar: ${publicacao.descricao}`, processoId: publicacao.processoId,
+    responsavelId: req.body.responsavelId ? Number(req.body.responsavelId) : req.session.userId,
+    prazo: publicacao.prazoFatal, tipoPrazo: publicacao.prazoFatal ? 'Fatal' : 'Interno',
+    prioridade: publicacao.prazoFatal ? 'Alta' : 'Média', status: 'A fazer',
+    observacoes: `Publicação ${publicacao.tribunal || 'TJMG'} em ${publicacao.dataPublicacao}. Processo: ${processo ? processo.nome : ''}`,
+    criadoEm: new Date().toISOString(),
+  };
+  db.tarefas.push(tarefa);
+  publicacao.status = 'Tratada';
+  publicacao.tarefaId = tarefa.id;
+  auditar(req, db, 'criou', 'tarefa', tarefa, tarefa.titulo);
+  await save(db);
+  res.status(201).json(tarefa);
+});
+
+app.get('/api/auditoria', requireAdmin, async (req, res) => {
+  const db = await load();
+  res.json([...(db.auditoria || [])].sort((a, b) => new Date(b.criadoEm) - new Date(a.criadoEm)).slice(0, 100));
+});
+
+// Equipe: gera (ou reaproveita) o link de envio de documentos para um cliente
+// (por cliente, não por processo — o processo só é criado depois que a documentação chega)
+app.post('/api/clientes/:id/link-envio', async (req, res) => {
+  const db = await load();
+  const cliente = db.clientes.find((c) => c.id === Number(req.params.id));
+  if (!cliente) return res.status(404).json({ erro: 'não encontrado' });
+  if (!cliente.uploadToken) {
+    cliente.uploadToken = crypto.randomBytes(16).toString('hex');
+    await save(db);
+  }
+  res.json({ token: cliente.uploadToken, caminho: '/enviar-documentos/' + cliente.uploadToken });
+});
+
+// Equipe: lista os modelos de checklist disponíveis (Genérico + os 42 tipos de caso do
+// manual), agrupados por categoria, para a equipe escolher quais se aplicam a cada cliente.
+app.get('/api/checklist-templates', async (req, res) => {
+  res.json(
+    CHECKLIST_TEMPLATES.map((t) => ({
+      id: t.id,
+      categoria: t.categoria,
+      titulo: t.titulo,
+      quantidadeItens: t.itens.length,
+      temOrientacao: !!t.orientacaoRelato,
+    }))
+  );
+});
+
+// Equipe: status do checklist de rotina documental de um cliente (mostra os itens dos
+// tipos de caso escolhidos para ele, com a marcação de quais foram solicitados e quais
+// já chegaram)
+app.get('/api/clientes/:id/rotina', async (req, res) => {
+  const db = await load();
+  const cliente = db.clientes.find((c) => c.id === Number(req.params.id));
+  if (!cliente) return res.status(404).json({ erro: 'não encontrado' });
+  res.json({
+    cliente: {
+      id: cliente.id,
+      nome: cliente.nome,
+      uploadToken: cliente.uploadToken || null,
+      tiposCaso: tiposCasoAtivos(cliente),
+    },
+    checklist: checklistCompleto(db, cliente),
+  });
+});
+
+// Equipe: define quais tipos de caso se aplicam a este cliente (pode combinar mais de um,
+// ex: cirurgia + OPME + reembolso). Ao ativar um tipo de caso novo, todos os itens dele
+// entram solicitados por padrão; ao remover um tipo de caso, seus itens somem do checklist.
+app.put('/api/clientes/:id/tipos-caso', async (req, res) => {
+  const db = await load();
+  const cliente = db.clientes.find((c) => c.id === Number(req.params.id));
+  if (!cliente) return res.status(404).json({ erro: 'não encontrado' });
+
+  const tiposNovos = Array.isArray(req.body.tipos) ? req.body.tipos.filter((id) => TEMPLATE_POR_ID[id]) : [];
+  const tiposAntigos = new Set(tiposCasoAtivos(cliente));
+  const setNovos = new Set(tiposNovos.length ? tiposNovos : ['GEN']);
+
+  const antigoSolicitados = new Set(Array.isArray(cliente.documentosSolicitados) ? cliente.documentosSolicitados : []);
+  const novoSolicitados = new Set();
+  for (const codigo of antigoSolicitados) {
+    const item = ITEM_POR_CODIGO[codigo];
+    if (item && setNovos.has(item.templateId)) novoSolicitados.add(codigo);
+  }
+  for (const tipoId of setNovos) {
+    if (!tiposAntigos.has(tipoId)) {
+      const template = TEMPLATE_POR_ID[tipoId];
+      if (template) template.itens.forEach((item) => novoSolicitados.add(item.codigo));
+    }
+  }
+
+  cliente.tiposCaso = [...setNovos];
+  cliente.documentosSolicitados = [...novoSolicitados];
+  await save(db);
+  res.json({ ok: true, tiposCaso: cliente.tiposCaso });
+});
+
+// Equipe: ajuste fino — marca/desmarca itens individuais dentro dos tipos de caso já
+// escolhidos para este cliente
+app.put('/api/clientes/:id/documentos-solicitados', async (req, res) => {
+  const db = await load();
+  const cliente = db.clientes.find((c) => c.id === Number(req.params.id));
+  if (!cliente) return res.status(404).json({ erro: 'não encontrado' });
+  const codigos = Array.isArray(req.body.codigos) ? req.body.codigos.filter((c) => CODIGOS_VALIDOS.has(c)) : [];
+  cliente.documentosSolicitados = codigos;
+  await save(db);
+  res.json({ ok: true, documentosSolicitados: codigos });
+});
+
+app.get('/api/documentos', async (req, res) => {
+  const db = await load();
+  res.json(db.documentos);
+});
+
+app.post('/api/documentos', upload.single('arquivo'), async (req, res) => {
+  const db = await load();
+  let arquivoRef = null;
+  let nomeOriginal = null;
+  if (req.file) {
+    const idArquivo = await salvarArquivo(req.file.buffer, req.file.originalname, req.file.mimetype);
+    arquivoRef = '/uploads/' + idArquivo;
+    nomeOriginal = req.file.originalname;
+  }
+  const item = {
+    id: nextId(db.documentos),
+    nome: req.body.nome || nomeOriginal || 'Documento',
+    clienteId: req.body.clienteId ? Number(req.body.clienteId) : null,
+    processoId: req.body.processoId ? Number(req.body.processoId) : null,
+    tipo: req.body.tipo || 'Outro',
+    arquivo: arquivoRef,
+    nomeOriginal,
+    criadoEm: new Date().toISOString(),
+  };
+  db.documentos.push(item);
+  await save(db);
+  res.status(201).json(item);
+});
+
+app.delete('/api/documentos/:id', async (req, res) => {
+  const db = await load();
   const doc = db.documentos.find((d) => d.id === Number(req.params.id));
   if (doc && doc.arquivo) {
-    const filePath = path.join(uploadsDir, path.basename(doc.arquivo));
-    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    const idArquivo = Number(String(doc.arquivo).split('/').pop());
+    if (!Number.isNaN(idArquivo)) await removerArquivo(idArquivo);
   }
   db.documentos = db.documentos.filter((d) => d.id !== Number(req.params.id));
-  auditar(req, db, 'removeu', 'documento', doc, doc ? doc.nome : '');
-  save(db);
+  await save(db);
   res.json({ removido: true });
 });
 
-app.get('/api/dashboard', (req, res) => {
-  const db = load();
+app.get('/api/dashboard', async (req, res) => {
+  const db = await load();
   const totalProcessos = db.processos.length;
   const liminaresDeferidas = db.processos.filter((p) => p.liminarDeferida).length;
-  const cpdsAtivos = db.processos.filter((p) => p.tipo === 'CPD' && p.status !== 'Concluído').length;
+  const hoje = new Date();
+  const daqui7dias = new Date();
+  daqui7dias.setDate(hoje.getDate() + 7);
+  const prazosSemana = db.eventos.filter((e) => {
+    if (!e.data) return false;
+    const dataEvento = new Date(e.data + 'T00:00:00');
+    return dataEvento >= new Date(hoje.toDateString()) && dataEvento <= daqui7dias;
+  }).length;
   const acoesPendentes = db.processos.filter((p) => p.status === 'Aguardando').length;
 
   const recentes = [...db.processos]
@@ -264,48 +777,90 @@ app.get('/api/dashboard', (req, res) => {
       return { ...p, clienteNome: cliente ? cliente.nome : '—' };
     });
 
-  const hoje = new Date().toISOString().slice(0, 10);
-  const limite = new Date();
-  limite.setDate(limite.getDate() + 7);
-  const proximosPrazos = [...db.eventos, ...db.processos.filter((p) => p.prazo).map((p) => ({
-    id: `processo-${p.id}`, data: p.prazo, titulo: `Prazo do processo: ${p.nome}`, tipo: 'Prazo', processoId: p.id,
-  }))]
-    .filter((e) => e.data && e.data >= hoje && new Date(`${e.data}T00:00:00`) <= limite)
-    .sort((a, b) => a.data.localeCompare(b.data))
-    .slice(0, 8)
-    .map((e) => ({ ...e, processoNome: e.processoId ? (db.processos.find((p) => p.id === e.processoId) || {}).nome : null }));
+  const documentosNovos = db.documentos
+    .filter((d) => d.origem === 'cliente-rotina' && !d.visto)
+    .sort((a, b) => new Date(b.criadoEm) - new Date(a.criadoEm))
+    .map((d) => {
+      const cliente = db.clientes.find((c) => c.id === d.clienteId);
+      return {
+        id: d.id,
+        nome: d.nome,
+        clienteId: d.clienteId,
+        clienteNome: cliente ? cliente.nome : '—',
+        arquivo: d.arquivo,
+        nomeOriginal: d.nomeOriginal,
+        criadoEm: d.criadoEm,
+      };
+    });
+
+  const hojeStr = new Date().toISOString().slice(0, 10);
+  const tarefasAbertas = (db.tarefas || []).filter((t) => t.status !== 'Concluída');
+  const amanha = new Date();
+  amanha.setDate(amanha.getDate() + 1);
+  const amanhaStr = amanha.toISOString().slice(0, 10);
+  const controladoria = calcularControladoria(db);
+  const financeiro = calcularFinanceiro(db);
 
   res.json({
     totalProcessos,
     liminaresDeferidas,
-    cpdsAtivos,
+    prazosSemana,
     acoesPendentes,
     totalClientes: db.clientes.length,
     processosRecentes: recentes,
-    proximosPrazos,
+    documentosNovos,
+    tarefasHoje: tarefasAbertas.filter((t) => t.prazo === hojeStr),
+    tarefasAmanha: tarefasAbertas.filter((t) => t.prazo === amanhaStr),
+    tarefasVencidas: tarefasAbertas.filter((t) => t.prazo && t.prazo < hojeStr),
+    publicacoesNovas: (db.publicacoes || []).filter((p) => p.status === 'Nova'),
+    excecoesCriticas: controladoria.filter((i) => i.risco === 'Crítico').length,
+    excecoesTotal: controladoria.length,
+    financeiroVencido: financeiro.vencido,
   });
 });
 
-app.get('/api/auditoria', requireAdmin, (req, res) => {
-  const db = load();
-  res.json([...(db.auditoria || [])].sort((a, b) => new Date(b.criadoEm) - new Date(a.criadoEm)).slice(0, 100));
+app.post('/api/documentos/:id/marcar-visto', async (req, res) => {
+  const db = await load();
+  const doc = db.documentos.find((d) => d.id === Number(req.params.id));
+  if (!doc) return res.status(404).json({ erro: 'não encontrado' });
+  doc.visto = true;
+  await save(db);
+  res.json({ ok: true });
 });
 
-app.use((err, req, res, next) => {
-  if (err instanceof multer.MulterError && err.code === 'LIMIT_FILE_SIZE') return res.status(400).json({ erro: 'o arquivo deve ter no máximo 10 MB' });
-  if (err) return res.status(400).json({ erro: err.message || 'erro ao enviar arquivo' });
-  next();
+app.post('/api/documentos/marcar-todos-vistos', async (req, res) => {
+  const db = await load();
+  db.documentos.forEach((d) => {
+    if (d.origem === 'cliente-rotina') d.visto = true;
+  });
+  await save(db);
+  res.json({ ok: true });
 });
 
-app.get('/uploads/:filename', requireAuth, (req, res) => {
-  const safe = path.basename(req.params.filename);
-  const filePath = path.join(uploadsDir, safe);
-  if (!fs.existsSync(filePath)) return res.status(404).send('Arquivo não encontrado.');
-  res.sendFile(filePath);
+app.get('/uploads/:id', requireAuth, async (req, res) => {
+  const idArquivo = Number(req.params.id);
+  if (Number.isNaN(idArquivo)) return res.status(404).send('Arquivo não encontrado.');
+  const arquivo = await buscarArquivo(idArquivo);
+  if (!arquivo) return res.status(404).send('Arquivo não encontrado.');
+  res.setHeader('Content-Type', arquivo.mimetype || 'application/octet-stream');
+  res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(arquivo.nome_original || 'arquivo')}"`);
+  res.send(arquivo.dados);
+});
+
+app.get('/enviar-documentos/:token', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'enviar-documentos.html'));
 });
 
 app.use(express.static(path.join(__dirname, 'public')));
 
-app.listen(PORT, () => {
-  console.log(`CRM rodando em http://localhost:${PORT}`);
+async function iniciarServidor() {
+  await ensureAdminSeed();
+  app.listen(PORT, () => {
+    console.log(`CRM rodando em http://localhost:${PORT}`);
+  });
+}
+
+iniciarServidor().catch((err) => {
+  console.error('Erro ao iniciar o servidor:', err);
+  process.exit(1);
 });

@@ -20,6 +20,11 @@
     </div>
     <nav>
       <button class="nav-item active" data-view="dashboard">📊 Dashboard</button>
+      <button class="nav-item" data-view="controladoria">⚖ Controladoria</button>
+      <button class="nav-item" data-view="tarefas">✓ Tarefas</button>
+      <button class="nav-item" data-view="publicacoes">📰 Publicações MG</button>
+      <button class="nav-item" data-view="financeiro">R$ Financeiro</button>
+      <button class="nav-item" data-view="leads">💬 Funil de Leads</button>
       <button class="nav-item" data-view="kanban">🗂 Quadro Kanban</button>
       <button class="nav-item" data-view="processos">📁 Processos</button>
       <button class="nav-item" data-view="calendario">📅 Calendário</button>
@@ -43,10 +48,12 @@
       <h2>Dashboard</h2>
       <div class="cards">
         <div class="card"><span class="card-label">Total de Casos</span><span class="card-value" id="stat-total">0</span></div>
-        <div class="card"><span class="card-label">Liminares Deferidas</span><span class="card-value" id="stat-liminares">0</span></div>
+        <div class="card"><span class="card-label">Exceções críticas</span><span class="card-value card-value-danger" id="stat-liminares">0</span></div>
         <div class="card"><span class="card-label">Prazos da Semana</span><span class="card-value" id="stat-prazos">0</span></div>
-        <div class="card"><span class="card-label">Ações Pendentes</span><span class="card-value" id="stat-pendentes">0</span></div>
+        <div class="card"><span class="card-label">Financeiro vencido</span><span class="card-value card-value-danger card-value-money" id="stat-pendentes">R$ 0</span></div>
       </div>
+      <div id="alertas-dashboard" class="alertas-dashboard"></div>
+      <div class="hoje-grid"><div class="panel"><h3>Tarefas de hoje</h3><div id="tarefas-hoje"></div></div><div class="panel"><h3>Para amanhã</h3><div id="tarefas-amanha"></div></div></div>
       <div class="panel" id="painel-documentos-novos" style="display:none;">
         <div class="view-header">
           <h3 style="margin:0;">🔔 Novos Documentos Recebidos</h3>
@@ -148,6 +155,27 @@
         <tbody></tbody>
       </table>
     </section>
+
+    <section id="view-controladoria" class="view">
+      <div class="view-header"><div><h2>Controladoria</h2><p class="subtitle">Exceções que exigem conferência humana, ordenadas por risco.</p></div><button class="btn-secondary" onclick="carregarTudo()">Atualizar conferência</button></div>
+      <div class="cards"><div class="card"><span class="card-label">Total de exceções</span><span class="card-value" id="ctrl-total">0</span></div><div class="card"><span class="card-label">Críticas</span><span class="card-value card-value-danger" id="ctrl-criticos">0</span></div><div class="card"><span class="card-label">Risco alto</span><span class="card-value" id="ctrl-altos">0</span></div><div class="card"><span class="card-label">Risco médio</span><span class="card-value" id="ctrl-medios">0</span></div></div>
+      <div class="notice">A tela cruza cadastros, publicações, tarefas, financeiro e os 42 checklists documentais. Confira sempre a fonte oficial antes de agir.</div>
+      <table class="table" id="tabela-controladoria"><thead><tr><th>Risco</th><th>Tipo</th><th>Exceção</th><th>Fonte/evidência</th><th>Providência</th><th>Confiança</th></tr></thead><tbody></tbody></table>
+    </section>
+
+    <section id="view-tarefas" class="view"><div class="view-header"><h2>Tarefas</h2><button class="btn-primary" onclick="abrirModalTarefa()">+ Nova Tarefa</button></div><div class="notice">Uma tarefa só pode ser concluída com evidência. Use “enviar para revisão” nos atos que precisem de conferência.</div><table class="table" id="tabela-tarefas"><thead><tr><th>Tarefa</th><th>Processo</th><th>Prazo</th><th>Prioridade</th><th>Status</th><th>Evidência</th><th>Ações</th></tr></thead><tbody></tbody></table></section>
+
+    <section id="view-publicacoes" class="view"><div class="view-header"><h2>Publicações — Minas Gerais</h2><button class="btn-primary" onclick="abrirModalPublicacao()">+ Registrar publicação</button></div><div class="notice">Central de tratamento para TJMG, TRT-3, TRF-6 e DJEN/CNJ. O vínculo pelo número CNJ é conciliado com os processos cadastrados.</div><table class="table" id="tabela-publicacoes"><thead><tr><th>Data</th><th>Processo</th><th>Publicação</th><th>Prazo fatal</th><th>Status</th><th>Ações</th></tr></thead><tbody></tbody></table></section>
+
+    <section id="view-financeiro" class="view">
+      <div class="view-header"><div><h2>Financeiro</h2><p class="subtitle">Conciliação entre contratos, vencimentos e recebimentos.</p></div><div><button class="btn-secondary" onclick="abrirModalPagamento()">+ Recebimento</button> <button class="btn-primary" onclick="abrirModalContrato()">+ Contrato</button></div></div>
+      <div class="cards"><div class="card"><span class="card-label">Contratado</span><span class="card-value card-value-money" id="fin-contratado">R$ 0</span></div><div class="card"><span class="card-label">Recebido</span><span class="card-value card-value-money" id="fin-recebido">R$ 0</span></div><div class="card"><span class="card-label">A receber</span><span class="card-value card-value-money" id="fin-receber">R$ 0</span></div><div class="card"><span class="card-label">Vencido</span><span class="card-value card-value-danger card-value-money" id="fin-vencido">R$ 0</span></div></div>
+      <div class="projection-grid"><div class="panel"><span class="card-label">Próximos 30 dias</span><strong id="fin-30">R$ 0</strong></div><div class="panel"><span class="card-label">Próximos 60 dias</span><strong id="fin-60">R$ 0</strong></div><div class="panel"><span class="card-label">Próximos 90 dias</span><strong id="fin-90">R$ 0</strong></div></div>
+      <div class="panel panel-prazos"><h3>Contratos e saldos</h3><table class="table" id="tabela-contratos"><thead><tr><th>Cliente</th><th>Descrição</th><th>Contratado</th><th>Recebido</th><th>Saldo</th><th>Próximo vencimento</th><th>Situação</th></tr></thead><tbody></tbody></table></div>
+      <div class="panel panel-prazos"><h3>Recebimentos sem contrato vinculado</h3><table class="table" id="tabela-pagamentos-soltos"><thead><tr><th>Data</th><th>Descrição</th><th>Valor</th></tr></thead><tbody></tbody></table></div>
+    </section>
+
+    <section id="view-leads" class="view"><div class="view-header"><h2>Funil de Leads</h2><button class="btn-primary" onclick="abrirModalLead()">+ Novo Lead</button></div><div class="notice">O botão WhatsApp abre a conversa. A entrada automática de mensagens depende da ativação da API oficial da Meta.</div><div class="kanban-board" id="leads-board"></div></section>
 
   </main>
 </div>

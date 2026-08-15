@@ -1,10 +1,12 @@
-const STATUSES = ['Novo', 'Em Andamento', 'Aguardando', 'Concluído'];
+const STATUSES = ['Triagem', 'Pré-contencioso', 'Em Andamento', 'Aguardando', 'Em recurso', 'Cumprimento', 'Arquivado', 'Sem êxito', 'Novo', 'Concluído'];
 const AREAS = ['Cível', 'Trabalhista', 'Família', 'Criminal', 'Tributário', 'Previdenciário', 'Outro'];
 const TIPOS_PROCESSO = ['Ação Ordinária', 'CPD', 'Mandado de Segurança', 'Execução', 'Outro'];
 const TIPOS_EVENTO = ['Audiência', 'Prazo', 'Reunião', 'Perícia', 'Outro'];
 const TIPOS_DOC = ['Petição', 'Procuração', 'Contrato', 'Documento Pessoal', 'Prova', 'Outro'];
+const ETAPAS_LEAD = ['Novo lead', 'Em contato', 'Qualificado', 'Reunião', 'Proposta', 'Contrato', 'Aguardando documentos', 'Cliente ativo', 'Follow-up', 'Perdido'];
+const STATUS_TAREFA = ['A fazer', 'Em execução', 'Aguardando revisão', 'Concluída'];
 
-let state = { clientes: [], processos: [], eventos: [], documentos: [], checklistTemplates: [], usuarios: [] };
+let state = { clientes: [], processos: [], eventos: [], documentos: [], checklistTemplates: [], usuarios: [], leads: [], tarefas: [], publicacoes: [], contratos: [], pagamentos: [], controladoria: { resumo: {}, itens: [] }, financeiro: {} };
 let usuarioAtual = null;
 
 // ---------- API helpers ----------
@@ -32,10 +34,19 @@ async function carregarTudo() {
     api('/api/documentos'),
     api('/api/dashboard'),
     api('/api/checklist-templates'),
+    api('/api/leads'),
+    api('/api/tarefas'),
+    api('/api/publicacoes'),
+    api('/api/contratos'),
+    api('/api/pagamentos'),
+    api('/api/controladoria'),
+    api('/api/financeiro'),
   ];
   if (usuarioAtual && usuarioAtual.role === 'admin') chamadas.push(api('/api/usuarios'));
-  const [clientes, processos, eventos, documentos, dashboard, checklistTemplates, usuarios] = await Promise.all(chamadas);
-  state = { clientes, processos, eventos, documentos, dashboard, checklistTemplates, usuarios: usuarios || [] };
+  const resultados = await Promise.all(chamadas);
+  const [clientes, processos, eventos, documentos, dashboard, checklistTemplates, leads, tarefas, publicacoes, contratos, pagamentos, controladoria, financeiro] = resultados;
+  const usuarios = usuarioAtual && usuarioAtual.role === 'admin' ? resultados[13] : [];
+  state = { clientes, processos, eventos, documentos, dashboard, checklistTemplates, leads, tarefas, publicacoes, contratos, pagamentos, controladoria, financeiro, usuarios: usuarios || [] };
   renderAll();
 }
 
@@ -67,6 +78,9 @@ function nomeProcesso(id) {
 function classStatus(s) {
   return 'status-' + String(s).replace(/\s+/g, '-');
 }
+function moeda(valor) { return Number(valor || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }); }
+function dataBr(valor) { return valor ? new Date(valor + 'T00:00:00').toLocaleDateString('pt-BR') : '—'; }
+function riscoClasse(risco) { return `risco-${String(risco || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()}`; }
 
 // ---------- Navegação ----------
 document.querySelectorAll('.nav-item[data-view]').forEach((btn) => {
@@ -86,6 +100,11 @@ function renderAll() {
   renderEventos();
   renderClientes();
   renderDocumentos();
+  renderLeads();
+  renderTarefas();
+  renderPublicacoes();
+  renderControladoria();
+  renderFinanceiro();
   renderRelatorios();
   renderRotina();
   if (usuarioAtual && usuarioAtual.role === 'admin') renderUsuarios();
@@ -94,9 +113,9 @@ function renderAll() {
 function renderDashboard() {
   const d = state.dashboard;
   document.getElementById('stat-total').textContent = d.totalProcessos;
-  document.getElementById('stat-liminares').textContent = d.liminaresDeferidas;
+  document.getElementById('stat-liminares').textContent = d.excecoesCriticas || 0;
   document.getElementById('stat-prazos').textContent = d.prazosSemana;
-  document.getElementById('stat-pendentes').textContent = d.acoesPendentes;
+  document.getElementById('stat-pendentes').textContent = moeda(d.financeiroVencido || 0);
 
   const tbody = document.querySelector('#tabela-recentes tbody');
   tbody.innerHTML = d.processosRecentes.map((p) => `
@@ -108,6 +127,16 @@ function renderDashboard() {
     </tr>`).join('') || '<tr><td colspan="4">Nenhum processo cadastrado ainda.</td></tr>';
 
   renderDocumentosNovos(d.documentosNovos || []);
+  const alertas = document.getElementById('alertas-dashboard');
+  if (alertas) alertas.innerHTML = [
+    ...(d.tarefasVencidas || []).map((t) => `<div class="alerta"><strong>Prazo vencido:</strong> ${t.titulo} — ${dataBr(t.prazo)}</div>`),
+    ...(d.publicacoesNovas || []).map((p) => `<div class="alerta"><strong>Publicação não tratada:</strong> ${p.descricao}</div>`),
+  ].join('');
+  const resumo = (itens) => itens.map((t) => `<div class="tarefa-resumo"><strong>${t.titulo}</strong>${t.prazo ? ` · ${dataBr(t.prazo)}` : ''}</div>`).join('') || '<span class="card-label">Nenhuma tarefa.</span>';
+  const hojeEl = document.getElementById('tarefas-hoje');
+  const amanhaEl = document.getElementById('tarefas-amanha');
+  if (hojeEl) hojeEl.innerHTML = resumo(d.tarefasHoje || []);
+  if (amanhaEl) amanhaEl.innerHTML = resumo(d.tarefasAmanha || []);
 }
 
 function renderDocumentosNovos(lista) {
@@ -389,6 +418,52 @@ function copiarLinkRotina(link) {
   navigator.clipboard.writeText(link).then(() => alert('Link copiado! Envie para o cliente por WhatsApp ou e-mail.'));
 }
 
+function renderLeads() {
+  const board = document.getElementById('leads-board');
+  if (!board) return;
+  board.innerHTML = ETAPAS_LEAD.map((etapa) => `<div class="kanban-col"><h4>${etapa} (${state.leads.filter((l) => l.etapa === etapa).length})</h4><div class="kanban-cards">${state.leads.filter((l) => l.etapa === etapa).map((l) => `<div class="kanban-card"><strong>${l.nome}</strong>${l.telefone ? `<a href="https://wa.me/55${l.telefone.replace(/\D/g, '')}" target="_blank">Abrir WhatsApp</a><br>` : ''}<small>${l.origem || 'Contato direto'}</small><br><button class="btn-icon" onclick="moverLead(${l.id})">Avançar</button></div>`).join('') || '<span class="card-label">Sem leads</span>'}</div></div>`).join('');
+}
+
+function renderTarefas() {
+  const tbody = document.querySelector('#tabela-tarefas tbody');
+  if (!tbody) return;
+  tbody.innerHTML = [...state.tarefas].sort((a, b) => String(a.prazo || '9999').localeCompare(String(b.prazo || '9999'))).map((t) => {
+    const aguardando = t.status === 'Aguardando revisão';
+    const concluida = t.status === 'Concluída';
+    const acao = aguardando ? `<button class="btn-primary btn-small" onclick="revisarTarefa(${t.id})">Revisar</button>` : (!concluida ? `<button class="btn-primary btn-small" onclick="concluirTarefa(${t.id})">Concluir</button>` : '✓');
+    return `<tr><td>${t.titulo}</td><td>${t.processoId ? nomeProcesso(t.processoId) : '—'}</td><td>${dataBr(t.prazo)} ${t.tipoPrazo === 'Fatal' ? '<span class="badge status-Aguardando">fatal</span>' : ''}</td><td>${t.prioridade || 'Média'}</td><td>${t.status || 'A fazer'}</td><td>${t.evidencia || '—'}</td><td>${acao}<button class="btn-icon" onclick="excluir('tarefas', ${t.id})">🗑️</button></td></tr>`;
+  }).join('') || '<tr><td colspan="7">Nenhuma tarefa cadastrada.</td></tr>';
+}
+
+function renderPublicacoes() {
+  const tbody = document.querySelector('#tabela-publicacoes tbody');
+  if (!tbody) return;
+  tbody.innerHTML = state.publicacoes.map((p) => `<tr><td>${dataBr(p.dataPublicacao)}</td><td>${p.processoId ? nomeProcesso(p.processoId) : `<span class="badge risco-critico">Não conciliado${p.numeroProcesso ? ` · ${p.numeroProcesso}` : ''}</span>`}</td><td>${p.descricao}</td><td>${dataBr(p.prazoFatal)}</td><td>${p.status}</td><td>${p.status === 'Nova' && p.processoId ? `<button class="btn-primary btn-small" onclick="criarTarefaPublicacao(${p.id})">Criar tarefa</button>` : (p.status === 'Nova' ? 'Vincule o processo' : '✓')}</td></tr>`).join('') || '<tr><td colspan="6">Nenhuma publicação registrada.</td></tr>';
+}
+
+function renderControladoria() {
+  const dados = state.controladoria || { resumo: {}, itens: [] };
+  const resumo = dados.resumo || {};
+  document.getElementById('ctrl-total').textContent = resumo.total || 0;
+  document.getElementById('ctrl-criticos').textContent = resumo.criticos || 0;
+  document.getElementById('ctrl-altos').textContent = resumo.altos || 0;
+  document.getElementById('ctrl-medios').textContent = resumo.medios || 0;
+  document.querySelector('#tabela-controladoria tbody').innerHTML = (dados.itens || []).map((i) => `<tr><td><span class="badge ${riscoClasse(i.risco)}">${i.risco}</span></td><td>${i.tipo}</td><td><strong>${i.titulo}</strong></td><td><small>${i.fonte}</small><br>${i.evidencia}</td><td>${i.acao}</td><td>${i.confianca}</td></tr>`).join('') || '<tr><td colspan="6"><div class="empty-success">Nenhuma exceção encontrada na conferência atual.</div></td></tr>';
+}
+
+function renderFinanceiro() {
+  const f = state.financeiro || {};
+  document.getElementById('fin-contratado').textContent = moeda(f.totalContratado);
+  document.getElementById('fin-recebido').textContent = moeda(f.totalRecebido);
+  document.getElementById('fin-receber').textContent = moeda(f.aReceber);
+  document.getElementById('fin-vencido').textContent = moeda(f.vencido);
+  document.getElementById('fin-30').textContent = moeda(f.projecao30);
+  document.getElementById('fin-60').textContent = moeda(f.projecao60);
+  document.getElementById('fin-90').textContent = moeda(f.projecao90);
+  document.querySelector('#tabela-contratos tbody').innerHTML = (f.contratos || []).map((c) => `<tr><td>${nomeCliente(c.clienteId)}</td><td>${c.descricao}</td><td>${moeda(c.valorTotal)}</td><td>${moeda(c.recebido)}</td><td>${moeda(c.saldo)}</td><td>${dataBr(c.proximoVencimento)}</td><td><span class="badge ${c.vencido ? 'risco-critico' : 'risco-baixo'}">${c.vencido ? 'Vencido' : (c.saldo ? 'Em aberto' : 'Quitado')}</span></td></tr>`).join('') || '<tr><td colspan="7">Nenhum contrato cadastrado.</td></tr>';
+  document.querySelector('#tabela-pagamentos-soltos tbody').innerHTML = (f.pagamentosSemContrato || []).map((p) => `<tr><td>${dataBr(p.data)}</td><td>${p.descricao || 'Recebimento'}</td><td>${moeda(p.valor)}</td></tr>`).join('') || '<tr><td colspan="3">Nenhum recebimento sem contrato.</td></tr>';
+}
+
 let charts = {};
 function renderRelatorios() {
   const porStatus = STATUSES.map((s) => state.processos.filter((p) => p.status === s).length);
@@ -418,6 +493,80 @@ function renderUsuarios() {
       <td>${u.role === 'admin' ? 'Administradora' : 'Membro'}${u.precisaTrocarSenha ? ' <span class="badge status-Aguardando">senha temporária</span>' : ''}</td>
       <td><button class="btn-icon" title="Remover" onclick="excluirUsuario(${u.id})">🗑️</button></td>
     </tr>`).join('') || '<tr><td colspan="4">Nenhum usuário cadastrado ainda.</td></tr>';
+}
+
+function abrirModalLead() {
+  modalBox.innerHTML = `<h3>Novo Lead</h3><label>Nome</label><input id="f-nome"><label>Telefone / WhatsApp</label><input id="f-telefone"><label>Origem</label><input id="f-origem" placeholder="Ex.: indicação, Instagram"><label>Etapa</label><select id="f-etapa">${opcoesLista(ETAPAS_LEAD, 'Novo lead')}</select><div class="modal-actions"><button class="btn-secondary" onclick="fecharModal()">Cancelar</button><button class="btn-primary" onclick="salvarLead()">Salvar</button></div>`;
+  overlay.classList.add('active');
+}
+async function salvarLead() {
+  await api('/api/leads', { method:'POST', body:JSON.stringify({ nome:document.getElementById('f-nome').value, telefone:document.getElementById('f-telefone').value, origem:document.getElementById('f-origem').value, etapa:document.getElementById('f-etapa').value }) });
+  fecharModal(); await carregarTudo();
+}
+async function moverLead(id) {
+  const lead = state.leads.find((l) => l.id === id);
+  const pos = ETAPAS_LEAD.indexOf(lead.etapa);
+  await api(`/api/leads/${id}`, { method:'PUT', body:JSON.stringify({ etapa:ETAPAS_LEAD[Math.min(pos + 1, ETAPAS_LEAD.length - 1)] }) });
+  await carregarTudo();
+}
+
+function abrirModalTarefa() {
+  modalBox.innerHTML = `<h3>Nova Tarefa</h3><label>Título</label><input id="f-titulo"><label>Processo</label><select id="f-processo">${opcoesProcessos()}</select><label>Prazo</label><input type="date" id="f-prazo"><label>Tipo de prazo</label><select id="f-tipo-prazo"><option>Interno</option><option>Fatal</option></select><label>Prioridade</label><select id="f-prioridade"><option>Alta</option><option selected>Média</option><option>Baixa</option></select><label>Status</label><select id="f-status-tarefa">${opcoesLista(STATUS_TAREFA, 'A fazer')}</select><div class="modal-actions"><button class="btn-secondary" onclick="fecharModal()">Cancelar</button><button class="btn-primary" onclick="salvarTarefa()">Salvar</button></div>`;
+  overlay.classList.add('active');
+}
+async function salvarTarefa() {
+  await api('/api/tarefas', { method:'POST', body:JSON.stringify({ titulo:document.getElementById('f-titulo').value, processoId:Number(document.getElementById('f-processo').value)||null, prazo:document.getElementById('f-prazo').value, tipoPrazo:document.getElementById('f-tipo-prazo').value, prioridade:document.getElementById('f-prioridade').value, status:document.getElementById('f-status-tarefa').value, responsavelId:usuarioAtual.id }) });
+  fecharModal(); await carregarTudo();
+}
+function concluirTarefa(id) {
+  modalBox.innerHTML = `<h3>Concluir tarefa</h3><div class="notice">Registre como o trabalho pode ser conferido: protocolo, link, documento, e-mail enviado ou resumo objetivo.</div><label>Evidência da conclusão</label><textarea id="f-evidencia" rows="4" placeholder="Ex.: Petição protocolada no PJe, ID 123456."></textarea><label class="check-line"><input type="checkbox" id="f-revisao"> Enviar para revisão antes da conclusão definitiva</label><div class="modal-actions"><button class="btn-secondary" onclick="fecharModal()">Cancelar</button><button class="btn-primary" onclick="salvarConclusaoTarefa(${id})">Registrar</button></div>`;
+  overlay.classList.add('active');
+}
+async function salvarConclusaoTarefa(id) {
+  try {
+    await api(`/api/tarefas/${id}/concluir`, { method:'POST', body:JSON.stringify({ evidencia:document.getElementById('f-evidencia').value, enviarParaRevisao:document.getElementById('f-revisao').checked }) });
+    fecharModal(); await carregarTudo();
+  } catch (e) { alert(e.message); }
+}
+async function revisarTarefa(id) {
+  const observacao = prompt('Observação da revisão (opcional):') || '';
+  await api(`/api/tarefas/${id}/revisar`, { method:'POST', body:JSON.stringify({ observacao }) });
+  await carregarTudo();
+}
+
+function abrirModalPublicacao() {
+  modalBox.innerHTML = `<h3>Registrar publicação</h3><label>Processo cadastrado (se localizado)</label><select id="f-processo">${opcoesProcessos()}</select><label>Número CNJ informado na publicação</label><input id="f-numero-processo" placeholder="0000000-00.0000.0.00.0000"><label>Descrição</label><textarea id="f-descricao" rows="4"></textarea><label>Data da publicação</label><input type="date" id="f-data-publicacao"><label>Prazo fatal</label><input type="date" id="f-prazo-fatal"><label>Tribunal/órgão</label><select id="f-tribunal"><option>TJMG</option><option>TRT-3</option><option>TRF-6</option><option>DJEN/CNJ</option><option>Outro</option></select><div class="modal-actions"><button class="btn-secondary" onclick="fecharModal()">Cancelar</button><button class="btn-primary" onclick="salvarPublicacao()">Salvar</button></div>`;
+  overlay.classList.add('active');
+}
+async function salvarPublicacao() {
+  await api('/api/publicacoes', { method:'POST', body:JSON.stringify({ processoId:Number(document.getElementById('f-processo').value)||null, numeroProcesso:document.getElementById('f-numero-processo').value, descricao:document.getElementById('f-descricao').value, dataPublicacao:document.getElementById('f-data-publicacao').value, prazoFatal:document.getElementById('f-prazo-fatal').value, tribunal:document.getElementById('f-tribunal').value }) });
+  fecharModal(); await carregarTudo();
+}
+async function criarTarefaPublicacao(id) {
+  await api(`/api/publicacoes/${id}/criar-tarefa`, { method:'POST', body:JSON.stringify({ responsavelId:usuarioAtual.id }) });
+  await carregarTudo();
+}
+
+function abrirModalContrato() {
+  modalBox.innerHTML = `<h3>Novo contrato de honorários</h3><label>Cliente</label><select id="f-cliente"><option value="">— selecione —</option>${opcoesClientes()}</select><label>Processo (opcional)</label><select id="f-processo">${opcoesProcessos()}</select><label>Descrição</label><input id="f-descricao" placeholder="Ex.: Honorários ação previdenciária"><label>Valor total</label><input id="f-valor" type="number" min="0" step="0.01"><label>Próximo vencimento</label><input id="f-vencimento" type="date"><label>Status</label><select id="f-status"><option>Ativo</option><option>Quitado</option><option>Cancelado</option></select><div class="modal-actions"><button class="btn-secondary" onclick="fecharModal()">Cancelar</button><button class="btn-primary" onclick="salvarContrato()">Salvar</button></div>`;
+  overlay.classList.add('active');
+}
+async function salvarContrato() {
+  try {
+    await api('/api/contratos', { method:'POST', body:JSON.stringify({ clienteId:Number(document.getElementById('f-cliente').value)||null, processoId:Number(document.getElementById('f-processo').value)||null, descricao:document.getElementById('f-descricao').value, valorTotal:Number(document.getElementById('f-valor').value), proximoVencimento:document.getElementById('f-vencimento').value||null, status:document.getElementById('f-status').value }) });
+    fecharModal(); await carregarTudo();
+  } catch (e) { alert(e.message); }
+}
+function abrirModalPagamento() {
+  const opcoes = state.contratos.map((c) => `<option value="${c.id}">${c.descricao} · ${nomeCliente(c.clienteId)}</option>`).join('');
+  modalBox.innerHTML = `<h3>Registrar recebimento</h3><label>Contrato (deixe vazio se ainda não conciliado)</label><select id="f-contrato"><option value="">— não conciliado —</option>${opcoes}</select><label>Data</label><input id="f-data" type="date"><label>Valor</label><input id="f-valor" type="number" min="0" step="0.01"><label>Descrição / comprovante</label><input id="f-descricao" placeholder="Ex.: PIX identificado no extrato"><div class="modal-actions"><button class="btn-secondary" onclick="fecharModal()">Cancelar</button><button class="btn-primary" onclick="salvarPagamento()">Salvar</button></div>`;
+  overlay.classList.add('active');
+}
+async function salvarPagamento() {
+  try {
+    await api('/api/pagamentos', { method:'POST', body:JSON.stringify({ contratoId:Number(document.getElementById('f-contrato').value)||null, data:document.getElementById('f-data').value, valor:Number(document.getElementById('f-valor').value), descricao:document.getElementById('f-descricao').value }) });
+    fecharModal(); await carregarTudo();
+  } catch (e) { alert(e.message); }
 }
 
 // ---------- Exclusão ----------
@@ -481,11 +630,12 @@ function abrirModalProcesso(id) {
   const p = id ? state.processos.find((x) => x.id === id) : {};
   modalBox.innerHTML = `
     <h3>${id ? 'Editar' : 'Novo'} Processo</h3>
-    <label>Nome / Número do processo</label><input id="f-nome" value="${p.nome || ''}" />
+    <label>Ação / nome do processo</label><input id="f-nome" value="${p.nome || ''}" />
+    <label>Número CNJ</label><input id="f-numero-processo-cnj" value="${p.numeroProcesso || ''}" placeholder="0000000-00.0000.0.00.0000" />
     <label>Cliente</label><select id="f-cliente"><option value="">— nenhum —</option>${opcoesClientes(p.clienteId)}</select>
     <label>Área</label><select id="f-area">${opcoesLista(AREAS, p.area)}</select>
     <label>Tipo</label><select id="f-tipo">${opcoesLista(TIPOS_PROCESSO, p.tipo)}</select>
-    <label>Status</label><select id="f-status">${opcoesLista(STATUSES, p.status || 'Novo')}</select>
+    <label>Status</label><select id="f-status">${opcoesLista(STATUSES, p.status || 'Triagem')}</select>
     <label>Prazo</label><input type="date" id="f-prazo" value="${p.prazo || ''}" />
     <label><input type="checkbox" id="f-liminar" ${p.liminarDeferida ? 'checked' : ''} style="width:auto;display:inline-block;"/> Liminar deferida</label>
     <div class="modal-actions">
@@ -498,6 +648,7 @@ function abrirModalProcesso(id) {
 async function salvarProcesso(id) {
   const body = {
     nome: document.getElementById('f-nome').value,
+    numeroProcesso: document.getElementById('f-numero-processo-cnj').value,
     clienteId: Number(document.getElementById('f-cliente').value) || null,
     area: document.getElementById('f-area').value,
     tipo: document.getElementById('f-tipo').value,
