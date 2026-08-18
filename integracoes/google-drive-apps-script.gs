@@ -5,7 +5,8 @@
 //
 // Padrão documental do escritório:
 // - 01 fica reservado para a PETIÇÃO INICIAL;
-// - os documentos de instrução começam em 02;
+// - 02 fica reservado exclusivamente para a PROCURAÇÃO, mesmo quando ausente;
+// - os demais documentos de instrução começam em 03;
 // - o CONTRATO DE HONORÁRIOS fica em subpasta própria e não entra na numeração;
 // - os originais são preservados antes da conversão/renomeação.
 
@@ -142,8 +143,12 @@ function renumerarDocumentosPeticao(pastaPeticao, nomeCliente) {
     return a.arquivo.getId() < b.arquivo.getId() ? -1 : 1;
   });
 
-  gerenciados.forEach(function (item, indice) {
-    var numero = String(indice + 2).padStart(2, '0');
+  var procuracaoNumerada = false;
+  var proximoNumero = 3;
+  gerenciados.forEach(function (item) {
+    var ehProcuracao = item.ordem === 1 && !procuracaoNumerada;
+    var numero = ehProcuracao ? '02' : String(proximoNumero++).padStart(2, '0');
+    if (ehProcuracao) procuracaoNumerada = true;
     var extensao = extensaoDoNome(item.arquivo.getName()) || '.pdf';
     item.arquivo.setName(numero + ' - ' + item.rotulo + ' - ' + item.cliente + extensao);
   });
