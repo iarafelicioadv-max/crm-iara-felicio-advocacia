@@ -69,4 +69,29 @@ function segredoValido(recebido, esperado) {
   return a.length > 0 && a.length === b.length && require('crypto').timingSafeEqual(a, b);
 }
 
-module.exports = { extrairEventoZapSign, aplicarEventoZapSign, segredoValido };
+async function confirmarEventoZapSignPorApi(payload, contratos, apiToken, fetchImpl = fetch) {
+  const evento = extrairEventoZapSign(payload);
+  if (!evento.token) return { confirmado: false, motivo: 'documento sem token', evento };
+  if (!(contratos || []).some((item) => item.zapsignToken === evento.token)) {
+    return { confirmado: false, motivo: 'documento não vinculado', evento };
+  }
+  if (!valorTexto(apiToken)) return { confirmado: false, motivo: 'API da ZapSign não configurada', evento };
+
+  const resposta = await fetchImpl(`https://api.zapsign.com.br/api/v1/docs/${encodeURIComponent(evento.token)}/`, {
+    headers: { Authorization: `Bearer ${apiToken}` },
+  });
+  if (!resposta.ok) {
+    return { confirmado: false, motivo: `a ZapSign respondeu ${resposta.status}`, evento, tentarNovamente: resposta.status >= 500 };
+  }
+  const documento = await resposta.json();
+  if (valorTexto(documento.token) !== evento.token) {
+    return { confirmado: false, motivo: 'token divergente na confirmação', evento };
+  }
+  return {
+    confirmado: true,
+    evento,
+    payload: { event_type: evento.evento || 'doc_refreshed', document: documento },
+  };
+}
+
+module.exports = { extrairEventoZapSign, aplicarEventoZapSign, segredoValido, confirmarEventoZapSignPorApi };

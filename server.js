@@ -7,7 +7,7 @@ const cookieSession = require('cookie-session');
 const { load, save, nextId, salvarArquivo, buscarArquivo, removerArquivo } = require('./db');
 const { configuracaoDriveValida, criarDrivePeloAmbiente } = require('./google-drive');
 const { calcularFinanceiro, normalizarContrato } = require('./financeiro');
-const { aplicarEventoZapSign, segredoValido } = require('./zapsign');
+const { aplicarEventoZapSign, segredoValido, confirmarEventoZapSignPorApi } = require('./zapsign');
 const {
   aplicarWebhookWhatsApp,
   assinaturaValida,
@@ -468,11 +468,29 @@ app.post('/api/publico/rotina/:token/upload', uploadRotina.any(), async (req, re
 // cabeçalho personalizado no webhook e nunca é devolvido pela aplicação.
 app.post('/api/integracoes/zapsign/webhook', async (req, res) => {
   const segredo = process.env.ZAPSIGN_WEBHOOK_SECRET;
-  if (!segredo) return res.status(503).json({ erro: 'webhook da ZapSign ainda não configurado' });
-  if (!segredoValido(req.get('x-zapsign-secret'), segredo)) return res.status(401).json({ erro: 'assinatura do webhook inválida' });
-
   const db = await load();
-  const resultado = aplicarEventoZapSign(db, req.body);
+  const cabecalhoValido = segredo && segredoValido(req.get('x-zapsign-secret'), segredo);
+  let payloadConfiavel = req.body;
+  let verificadoPor = 'cabeçalho seguro';
+
+  // O painel web da ZapSign nem sempre oferece cabeçalhos personalizados.
+  // Nesse caso, o CRM consulta o documento diretamente na API oficial antes
+  // de aceitar qualquer alteração de status recebida pelo webhook.
+  if (!cabecalhoValido) {
+    const confirmacao = await confirmarEventoZapSignPorApi(
+      req.body,
+      db.contratos,
+      process.env.ZAPSIGN_API_TOKEN
+    );
+    if (!confirmacao.confirmado) {
+      const status = confirmacao.tentarNovamente ? 502 : 200;
+      return res.status(status).json({ recebido: true, aplicado: false, motivo: confirmacao.motivo });
+    }
+    payloadConfiavel = confirmacao.payload;
+    verificadoPor = 'API oficial da ZapSign';
+  }
+
+  const resultado = aplicarEventoZapSign(db, payloadConfiavel);
   if (resultado.aplicado) {
     if (!db.auditoria) db.auditoria = [];
     db.auditoria.push({
@@ -485,7 +503,7 @@ app.post('/api/integracoes/zapsign/webhook', async (req, res) => {
   }
   // Eventos sem contrato correspondente também recebem 200 para não criar
   // uma fila infinita de novas tentativas na ZapSign.
-  res.json({ recebido: true, aplicado: resultado.aplicado });
+  res.json({ recebido: true, aplicado: resultado.aplicado, verificadoPor });
 });
 
 app.use('/api', requireAuth);
