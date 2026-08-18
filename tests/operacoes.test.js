@@ -8,9 +8,10 @@ const inicio = codigo.indexOf('function dataHoje()');
 const fim = codigo.indexOf("app.get('/api/controladoria'", inicio);
 assert(inicio >= 0 && fim > inicio, 'bloco de operações não encontrado');
 
-const carregar = new Function('checklistCompleto', `${codigo.slice(inicio, fim)}; return { calcularControladoria, calcularFinanceiro };`);
+const carregar = new Function('checklistCompleto', `${codigo.slice(inicio, fim)}; return { calcularControladoria };`);
 const checklistCompleto = (_db, cliente) => cliente.id === 1 ? [{ solicitado: true, enviado: false, rotulo: 'Procuração' }] : [];
-const { calcularControladoria, calcularFinanceiro } = carregar(checklistCompleto);
+const { calcularControladoria } = carregar(checklistCompleto);
+const { calcularFinanceiro } = require('../financeiro');
 
 const db = {
   clientes: [{ id: 1, nome: 'Cliente Teste' }],
