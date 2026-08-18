@@ -145,10 +145,93 @@ function assinaturaValida(rawBody, assinatura, appSecret) {
   return recebidaBuffer.length === esperadaBuffer.length && crypto.timingSafeEqual(recebidaBuffer, esperadaBuffer);
 }
 
+function configuracaoEnvioValida({ phoneNumberId, accessToken }) {
+  return !!(somenteDigitos(phoneNumberId) && String(accessToken || '').trim());
+}
+
+function telefoneDestino(valor) {
+  const digitos = somenteDigitos(valor);
+  if (digitos && !digitos.startsWith('55') && (digitos.length === 10 || digitos.length === 11)) return `55${digitos}`;
+  return digitos;
+}
+
+function payloadMensagemTexto(telefone, texto) {
+  const destino = telefoneDestino(telefone);
+  const conteudo = String(texto || '').trim();
+  if (!destino) throw new Error('o lead não possui um telefone válido');
+  if (!conteudo) throw new Error('digite uma mensagem');
+  if (conteudo.length > 4096) throw new Error('a mensagem deve ter no máximo 4.096 caracteres');
+  return {
+    messaging_product: 'whatsapp',
+    recipient_type: 'individual',
+    to: destino,
+    type: 'text',
+    text: { preview_url: false, body: conteudo },
+  };
+}
+
+async function enviarMensagemTexto({ telefone, texto, phoneNumberId, accessToken, apiVersion = 'v26.0', fetchImpl = global.fetch }) {
+  if (!configuracaoEnvioValida({ phoneNumberId, accessToken })) {
+    const erro = new Error('o envio pelo WhatsApp ainda não foi configurado');
+    erro.statusCode = 503;
+    throw erro;
+  }
+  if (typeof fetchImpl !== 'function') throw new Error('cliente HTTP indisponível');
+
+  const versao = /^v\d+\.\d+$/.test(String(apiVersion)) ? String(apiVersion) : 'v26.0';
+  const payload = payloadMensagemTexto(telefone, texto);
+  const resposta = await fetchImpl(`https://graph.facebook.com/${versao}/${somenteDigitos(phoneNumberId)}/messages`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${String(accessToken).trim()}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+  const dados = await resposta.json().catch(() => ({}));
+  if (!resposta.ok) {
+    const erro = new Error((dados.error && (dados.error.error_user_msg || dados.error.message)) || 'a Meta recusou o envio da mensagem');
+    erro.statusCode = resposta.status >= 400 && resposta.status < 500 ? 400 : 502;
+    erro.metaCode = dados.error && dados.error.code;
+    throw erro;
+  }
+  const idMensagem = dados.messages && dados.messages[0] && dados.messages[0].id;
+  if (!idMensagem) {
+    const erro = new Error('a Meta não confirmou o identificador da mensagem enviada');
+    erro.statusCode = 502;
+    throw erro;
+  }
+  return { idMensagem, destinatario: dados.contacts && dados.contacts[0] ? dados.contacts[0].wa_id : payload.to };
+}
+
+function registrarMensagemSaida(lead, { idMensagem, texto, criadoEm = new Date().toISOString() }) {
+  if (!lead) throw new Error('lead não encontrado');
+  if (!Array.isArray(lead.interacoes)) lead.interacoes = [];
+  const interacao = {
+    idMensagem,
+    tipo: 'text',
+    texto: String(texto || '').trim(),
+    direcao: 'saida',
+    status: 'enviada',
+    criadoEm,
+  };
+  lead.interacoes.push(interacao);
+  lead.interacoes = lead.interacoes.slice(-200);
+  lead.ultimaMensagem = interacao.texto;
+  lead.ultimaInteracaoEm = criadoEm;
+  if (lead.etapa === 'Novo lead') lead.etapa = 'Em contato';
+  return interacao;
+}
+
 module.exports = {
   somenteDigitos,
   telefonesIguais,
   textoMensagem,
   aplicarWebhookWhatsApp,
   assinaturaValida,
+  configuracaoEnvioValida,
+  telefoneDestino,
+  payloadMensagemTexto,
+  enviarMensagemTexto,
+  registrarMensagemSaida,
 };

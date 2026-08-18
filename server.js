@@ -5,7 +5,14 @@ const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const cookieSession = require('cookie-session');
 const { load, save, nextId, salvarArquivo, buscarArquivo, removerArquivo } = require('./db');
-const { aplicarWebhookWhatsApp, assinaturaValida } = require('./whatsapp');
+const { configuracaoDriveValida, criarDrivePeloAmbiente } = require('./google-drive');
+const {
+  aplicarWebhookWhatsApp,
+  assinaturaValida,
+  configuracaoEnvioValida,
+  enviarMensagemTexto,
+  registrarMensagemSaida,
+} = require('./whatsapp');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -75,6 +82,73 @@ function auditar(req, db, acao, recurso, item, detalhes) {
     criadoEm: new Date().toISOString(),
   });
   if (db.auditoria.length > 1000) db.auditoria = db.auditoria.slice(-1000);
+}
+
+let driveCRMCache = null;
+function obterDriveCRM() {
+  if (!configuracaoDriveValida()) return null;
+  if (!driveCRMCache) driveCRMCache = criarDrivePeloAmbiente();
+  return driveCRMCache;
+}
+
+async function garantirPastaDriveCliente(cliente) {
+  const drive = obterDriveCRM();
+  if (!drive) {
+    cliente.driveSyncStatus = 'Pendente de configuração';
+    cliente.driveSyncErro = null;
+    return null;
+  }
+  try {
+    const pasta = await drive.garantirPastaCliente(cliente.nome, cliente.id);
+    cliente.driveFolderId = pasta.id;
+    cliente.driveFolderUrl = pasta.webViewLink || null;
+    cliente.driveSyncStatus = 'Sincronizado';
+    cliente.driveSyncErro = null;
+    cliente.driveSincronizadoEm = new Date().toISOString();
+    return pasta;
+  } catch (erro) {
+    cliente.driveSyncStatus = 'Pendente';
+    cliente.driveSyncErro = String(erro.message || 'Falha ao criar a pasta no Drive').slice(0, 300);
+    return null;
+  }
+}
+
+async function sincronizarDocumentoDrive(cliente, documento, buffer, mimetype) {
+  const drive = obterDriveCRM();
+  if (!drive) {
+    documento.driveSyncStatus = 'Pendente de configuração';
+    documento.driveSyncErro = null;
+    return null;
+  }
+  const pasta = cliente.driveFolderId ? { id: cliente.driveFolderId } : await garantirPastaDriveCliente(cliente);
+  if (!pasta) {
+    documento.driveSyncStatus = 'Pendente';
+    documento.driveSyncErro = cliente.driveSyncErro || 'A pasta da cliente ainda não está disponível no Drive';
+    return null;
+  }
+  try {
+    const extensaoOriginal = path.extname(String(documento.nomeOriginal || ''));
+    const nomePadronizado = documento.categoriaPOP
+      ? `${documento.categoriaPOP} - ${documento.nome}${extensaoOriginal}`
+      : (documento.nomeOriginal || documento.nome);
+    const arquivo = await drive.enviarDocumento({
+      pastaId: pasta.id,
+      documentoId: documento.id,
+      nome: nomePadronizado,
+      mimetype,
+      buffer,
+    });
+    documento.driveFileId = arquivo.id;
+    documento.driveFileUrl = arquivo.webViewLink || null;
+    documento.driveSyncStatus = 'Sincronizado';
+    documento.driveSyncErro = null;
+    documento.driveSincronizadoEm = new Date().toISOString();
+    return arquivo;
+  } catch (erro) {
+    documento.driveSyncStatus = 'Pendente';
+    documento.driveSyncErro = String(erro.message || 'Falha ao copiar o documento para o Drive').slice(0, 300);
+    return null;
+  }
 }
 
 app.post('/api/login', async (req, res) => {
@@ -357,6 +431,7 @@ app.post('/api/publico/rotina/:token/upload', uploadRotina.any(), async (req, re
   if (!cliente) return res.status(404).json({ erro: 'link inválido ou expirado' });
 
   let salvos = 0;
+  const documentosNovos = [];
   for (const file of req.files || []) {
     const codigo = file.fieldname;
     if (!CODIGOS_VALIDOS.has(codigo)) continue;
@@ -376,10 +451,15 @@ app.post('/api/publico/rotina/:token/upload', uploadRotina.any(), async (req, re
       visto: false,
     };
     db.documentos.push(doc);
+    documentosNovos.push({ doc, file });
     salvos++;
   }
   await save(db);
-  res.json({ ok: true, salvos });
+  for (const { doc, file } of documentosNovos) {
+    await sincronizarDocumentoDrive(cliente, doc, file.buffer, file.mimetype);
+  }
+  if (documentosNovos.length) await save(db);
+  res.json({ ok: true, salvos, sincronizadosDrive: documentosNovos.filter(({ doc }) => doc.driveSyncStatus === 'Sincronizado').length });
 });
 
 app.use('/api', requireAuth);
@@ -392,6 +472,10 @@ app.get('/api/whatsapp/status', async (req, res) => {
     .sort()
     .at(-1) || null;
   const configurado = !!(process.env.WHATSAPP_VERIFY_TOKEN && process.env.WHATSAPP_APP_SECRET);
+  const envioConfigurado = configuracaoEnvioValida({
+    phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID,
+    accessToken: process.env.WHATSAPP_ACCESS_TOKEN,
+  });
   const ultimoWebhookEm = db.integracoes && db.integracoes.whatsapp
     ? db.integracoes.whatsapp.ultimoWebhookEm || null
     : null;
@@ -399,10 +483,45 @@ app.get('/api/whatsapp/status', async (req, res) => {
     receptorPronto: true,
     configurado,
     conectado: !!(configurado && ultimoWebhookEm),
+    envioConfigurado,
     ultimoWebhookEm,
     ultimaEntrada,
     webhook: `${req.protocol}://${req.get('host')}/webhooks/whatsapp`,
   });
+});
+
+app.post('/api/leads/:id/whatsapp/mensagens', async (req, res) => {
+  const leadId = Number(req.params.id);
+  const texto = String(req.body.texto || '').trim();
+  const dbAntesDoEnvio = await load();
+  const leadAntesDoEnvio = (dbAntesDoEnvio.leads || []).find((item) => item.id === leadId);
+  if (!leadAntesDoEnvio) return res.status(404).json({ erro: 'lead não encontrado' });
+
+  try {
+    const resultado = await enviarMensagemTexto({
+      telefone: leadAntesDoEnvio.whatsappWaId || leadAntesDoEnvio.telefone,
+      texto,
+      phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID,
+      accessToken: process.env.WHATSAPP_ACCESS_TOKEN,
+      apiVersion: process.env.WHATSAPP_GRAPH_API_VERSION || 'v26.0',
+    });
+
+    // Recarrega depois da chamada externa para preservar mensagens que possam ter
+    // chegado pelo webhook enquanto a Meta processava o envio.
+    const db = await load();
+    const lead = (db.leads || []).find((item) => item.id === leadId);
+    if (!lead) return res.status(409).json({ erro: 'a mensagem foi enviada, mas o lead não existe mais para registrar o histórico' });
+    const interacao = registrarMensagemSaida(lead, {
+      idMensagem: resultado.idMensagem,
+      texto,
+    });
+    auditar(req, db, 'enviou mensagem', 'leads', lead, 'Resposta enviada pela API oficial do WhatsApp');
+    await save(db);
+    return res.status(201).json(interacao);
+  } catch (erro) {
+    console.error('Erro ao enviar mensagem pelo WhatsApp:', erro.message, erro.metaCode || '');
+    return res.status(erro.statusCode || 500).json({ erro: erro.message || 'não foi possível enviar a mensagem' });
+  }
 });
 
 app.post('/api/leads/:id/marcar-lidas', async (req, res) => {
@@ -493,6 +612,21 @@ function crud(resource) {
     const db = await load();
     const item = { id: nextId(db[resource]), criadoEm: new Date().toISOString(), ...req.body };
     if (resource === 'clientes' && !String(item.nome || '').trim()) return res.status(400).json({ erro: 'nome do cliente é obrigatório' });
+    if (resource === 'clientes') {
+      const documentoNormalizado = String(item.documento || '').replace(/\D/g, '');
+      const nomeNormalizado = String(item.nome || '').trim().toLocaleLowerCase('pt-BR');
+      const emailNormalizado = String(item.email || '').trim().toLocaleLowerCase('pt-BR');
+      const telefoneNormalizado = String(item.telefone || '').replace(/\D/g, '');
+      const duplicado = db.clientes.find((cliente) => {
+        const mesmoDocumento = documentoNormalizado && String(cliente.documento || '').replace(/\D/g, '') === documentoNormalizado;
+        const mesmosDados =
+          String(cliente.nome || '').trim().toLocaleLowerCase('pt-BR') === nomeNormalizado &&
+          String(cliente.email || '').trim().toLocaleLowerCase('pt-BR') === emailNormalizado &&
+          String(cliente.telefone || '').replace(/\D/g, '') === telefoneNormalizado;
+        return mesmoDocumento || mesmosDados;
+      });
+      if (duplicado) return res.status(409).json({ erro: 'já existe uma cliente com estes dados', clienteId: duplicado.id });
+    }
     if (resource === 'processos' && !String(item.nome || '').trim()) return res.status(400).json({ erro: 'nome ou número do processo é obrigatório' });
     if (resource === 'eventos' && (!String(item.titulo || '').trim() || !item.data)) return res.status(400).json({ erro: 'título e data do evento são obrigatórios' });
     if (resource === 'leads' && !String(item.nome || '').trim()) return res.status(400).json({ erro: 'nome do lead é obrigatório' });
@@ -503,6 +637,10 @@ function crud(resource) {
     db[resource].push(item);
     auditar(req, db, 'criou', resource, item, item.nome || item.titulo || item.descricao || '');
     await save(db);
+    if (resource === 'clientes') {
+      await garantirPastaDriveCliente(item);
+      await save(db);
+    }
     res.status(201).json(item);
   });
 
@@ -815,7 +953,47 @@ app.post('/api/documentos', upload.single('arquivo'), async (req, res) => {
   };
   db.documentos.push(item);
   await save(db);
+  if (req.file && item.clienteId) {
+    const cliente = db.clientes.find((c) => c.id === item.clienteId);
+    if (cliente) {
+      await sincronizarDocumentoDrive(cliente, item, req.file.buffer, req.file.mimetype);
+      await save(db);
+    }
+  }
   res.status(201).json(item);
+});
+
+app.get('/api/drive/status', async (req, res) => {
+  res.json({
+    configurado: configuracaoDriveValida(),
+    automacaoConfigurada: !!String(process.env.GOOGLE_DRIVE_WEBHOOK_URL || '').trim(),
+  });
+});
+
+app.post('/api/clientes/:id/drive/sincronizar', async (req, res) => {
+  const db = await load();
+  const cliente = db.clientes.find((c) => c.id === Number(req.params.id));
+  if (!cliente) return res.status(404).json({ erro: 'cliente não encontrado' });
+  if (!configuracaoDriveValida()) return res.status(503).json({ erro: 'a integração com o Google Drive ainda não foi configurada na Render' });
+
+  const pasta = await garantirPastaDriveCliente(cliente);
+  if (!pasta) {
+    await save(db);
+    return res.status(502).json({ erro: cliente.driveSyncErro || 'não foi possível criar a pasta da cliente no Drive' });
+  }
+
+  let documentosSincronizados = 0;
+  for (const documento of db.documentos.filter((d) => d.clienteId === cliente.id && d.arquivo && !d.driveFileId)) {
+    const idArquivo = Number(String(documento.arquivo).split('/').pop());
+    if (Number.isNaN(idArquivo)) continue;
+    const arquivo = await buscarArquivo(idArquivo);
+    if (!arquivo) continue;
+    const resultado = await sincronizarDocumentoDrive(cliente, documento, arquivo.dados, arquivo.mimetype);
+    if (resultado) documentosSincronizados++;
+  }
+  auditar(req, db, 'sincronizou', 'clientes', cliente, `Pasta do Drive e ${documentosSincronizados} documento(s)`);
+  await save(db);
+  res.json({ ok: true, pastaUrl: cliente.driveFolderUrl, documentosSincronizados });
 });
 
 app.delete('/api/documentos/:id', async (req, res) => {

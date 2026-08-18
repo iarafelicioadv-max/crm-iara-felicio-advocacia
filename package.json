@@ -5,7 +5,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node tests/operacoes.test.js && node tests/whatsapp.test.js"
+    "test": "node tests/operacoes.test.js && node tests/whatsapp.test.js && node tests/google-drive.test.js"
   },
   "dependencies": {
     "express": "^4.19.2",
