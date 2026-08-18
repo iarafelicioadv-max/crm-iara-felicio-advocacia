@@ -40,6 +40,6 @@ assert.strictEqual(financeiro.pagamentosSemContrato.length, 1);
 const html = fs.readFileSync(path.join(raiz, 'public', 'index.html'), 'utf8');
 const app = fs.readFileSync(path.join(raiz, 'public', 'app.js'), 'utf8');
 ['view-controladoria', 'view-financeiro', 'view-leads', 'tabela-tarefas', 'tabela-publicacoes'].forEach((id) => assert(html.includes(`id="${id}"`), `ID ausente: ${id}`));
-['renderControladoria()', 'renderFinanceiro()', 'renderRotina()', '/api/tarefas/${id}/concluir'].forEach((trecho) => assert(app.includes(trecho), `fluxo ausente: ${trecho}`));
+['renderControladoria()', 'renderFinanceiro()', 'renderRotina()', '/api/tarefas/${id}/concluir', 'salvarEdicaoPagamento'].forEach((trecho) => assert(app.includes(trecho), `fluxo ausente: ${trecho}`));
 
 console.log('OK: recursos anteriores e novos fluxos operacionais validados.');
