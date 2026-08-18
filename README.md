@@ -49,7 +49,7 @@ Nunca grave os dois segredos no GitHub. O valor bruto registra o contrato; o flu
 
 ## Integração com a pasta CLIENTES do Google Drive
 
-Ao criar uma cliente, o CRM cria ou reaproveita uma pasta com o nome dela dentro de `CLIENTES` e garante quatro subpastas: `CONTRATO DE HONORÁRIOS`, `PETIÇÃO INICIAL`, `ORIGINAIS` e `AUDITORIA`. O número `01` fica reservado para a petição inicial; os documentos de instrução são ordenados dinamicamente a partir de `02`, sem lacunas. O contrato de honorários permanece em sua pasta própria e não participa dessa numeração.
+Ao criar uma cliente, o CRM cria ou reaproveita uma pasta com o nome dela dentro de `CLIENTES` e garante quatro subpastas: `CONTRATO DE HONORÁRIOS`, `PETIÇÃO INICIAL`, `ORIGINAIS` e `AUDITORIA`. O número `01` fica reservado para a petição inicial e o número `02` exclusivamente para a procuração. Quando a procuração ainda não existir, o `02` permanece vago e os demais documentos começam em `03`, seguindo a ordem dinâmica sem outras lacunas. O contrato de honorários permanece em sua pasta própria e não participa dessa numeração.
 
 Arquivos enviados pelo portal documental ou anexados no cadastro são mantidos no banco do CRM, preservados com o nome de origem em `ORIGINAIS` e copiados em versão processual para `PETIÇÃO INICIAL`. A automação tenta converter a versão processual para PDF e registra quando a conversão exige conferência. Se o Google estiver indisponível, o cadastro não é perdido: o item fica como pendente e pode ser reenviado pelo botão de nuvem na lista de clientes.
 
@@ -68,6 +68,12 @@ A integração usa um Google Apps Script executado pela conta proprietária dos 
 O Apps Script também instala um monitor periódico de dez minutos. Assim, pastas criadas manualmente dentro de `CLIENTES` recebem a mesma estrutura. Se a conta solicitar autorização para esse monitor, execute uma vez a função `monitorarNovasPastasClientes` no editor e aceite as permissões.
 
 Nunca grave a chave de sincronização no GitHub. A automação cobre documentos que passam pelo CRM. Arquivos recebidos diretamente por e-mail, WhatsApp ou navegador precisam ser enviados ao portal da cliente ou movidos para a pasta de entrada antes da organização.
+
+## Procuração preenchida pelo CRM e ZapSign
+
+Na lista de clientes, o botão de caneta abre o formulário da procuração. O CRM reaproveita nome, CPF, contato e endereço, solicita os dados faltantes, gera um PDF A4 e o registra como documento da categoria POP `01`. A automação documental converte essa categoria no nome final `02 - PROCURAÇÃO`, mantendo o número `01` reservado para a petição inicial.
+
+Ao confirmar o formulário, o CRM também cria o documento na ZapSign. Se a cliente tiver e-mail, a própria ZapSign envia o convite; o envio automático por WhatsApp fica desligado para não gerar cobrança sem confirmação. Sem e-mail, o CRM apresenta o link de assinatura para cópia. O webhook já atualiza o status da procuração quando ela é assinada, recusada ou expira.
 
 ## 1. Login
 

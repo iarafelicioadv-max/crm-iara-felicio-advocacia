@@ -7,7 +7,8 @@ const cookieSession = require('cookie-session');
 const { load, save, nextId, salvarArquivo, buscarArquivo, removerArquivo } = require('./db');
 const { configuracaoDriveValida, criarDrivePeloAmbiente } = require('./google-drive');
 const { calcularFinanceiro, normalizarContrato } = require('./financeiro');
-const { aplicarEventoZapSign, segredoValido, confirmarEventoZapSignPorApi } = require('./zapsign');
+const { aplicarEventoZapSign, segredoValido, confirmarEventoZapSignPorApi, criarProcuracaoZapSign } = require('./zapsign');
+const { gerarPdfProcuracao, normalizarDadosProcuracao, validarDadosProcuracao } = require('./procuracao');
 const {
   aplicarWebhookWhatsApp,
   assinaturaValida,
@@ -484,7 +485,9 @@ app.post('/api/integracoes/zapsign/webhook', async (req, res) => {
     const confirmacao = await confirmarEventoZapSignPorApi(
       req.body,
       db.contratos,
-      process.env.ZAPSIGN_API_TOKEN
+      process.env.ZAPSIGN_API_TOKEN,
+      fetch,
+      db.documentos
     );
     if (!confirmacao.confirmado) {
       const status = confirmacao.tentarNovamente ? 502 : 200;
@@ -499,7 +502,7 @@ app.post('/api/integracoes/zapsign/webhook', async (req, res) => {
     if (!db.auditoria) db.auditoria = [];
     db.auditoria.push({
       id: nextId(db.auditoria), usuarioId: null, usuarioNome: 'ZapSign', acao: 'atualizou assinatura',
-      recurso: 'contratos', recursoId: resultado.contrato.id,
+      recurso: resultado.recurso, recursoId: resultado.item.id,
       detalhes: `${resultado.evento.evento}: ${resultado.evento.status || 'sem status'}`,
       criadoEm: new Date().toISOString(),
     });
@@ -522,6 +525,120 @@ app.get('/api/integracoes/zapsign/status', async (req, res) => {
     ultimoWebhookEm: integracao.ultimoWebhookEm || null,
     ultimoEvento: integracao.ultimoEvento || null,
   });
+});
+
+function atualizarClienteComDadosProcuracao(cliente, dados) {
+  Object.assign(cliente, {
+    nome: dados.nome,
+    documento: dados.cpf,
+    nacionalidade: dados.nacionalidade,
+    estadoCivil: dados.estadoCivil,
+    profissao: dados.profissao,
+    rg: dados.rg,
+    orgaoEmissor: dados.orgaoEmissor,
+    endereco: dados.enderecoCompleto,
+    logradouro: dados.logradouro,
+    numeroEndereco: dados.numeroEndereco,
+    complemento: dados.complemento,
+    bairro: dados.bairro,
+    cep: dados.cep,
+    cidade: dados.cidade,
+    uf: dados.uf,
+    email: dados.email || cliente.email || '',
+    telefone: dados.telefone || cliente.telefone || '',
+  });
+}
+
+async function enviarDocumentoProcuracaoZapSign(documento, cliente, pdf) {
+  const criado = await criarProcuracaoZapSign({
+    pdf,
+    documentoId: documento.id,
+    cliente,
+    apiToken: process.env.ZAPSIGN_API_TOKEN,
+  });
+  documento.zapsignToken = criado.token;
+  documento.zapsignStatus = 'Aguardando assinatura';
+  documento.statusAssinatura = 'Aguardando assinatura';
+  documento.zapsignSignUrl = criado.signUrl;
+  documento.zapsignEnviadoPorEmail = criado.envioAutomaticoEmail;
+  documento.zapsignEnviadoEm = new Date().toISOString();
+  documento.zapsignErro = null;
+  return criado;
+}
+
+app.post('/api/clientes/:id/procuracao', async (req, res) => {
+  const db = await load();
+  const cliente = db.clientes.find((item) => item.id === Number(req.params.id));
+  if (!cliente) return res.status(404).json({ erro: 'cliente não encontrado' });
+  const ativa = db.documentos.find((item) =>
+    item.clienteId === cliente.id && item.tipo === 'Procuração' &&
+    !['Assinado', 'Recusado', 'Expirado', 'Excluído'].includes(item.zapsignStatus)
+  );
+  if (ativa) {
+    return res.status(409).json({
+      erro: 'já existe uma procuração ativa para esta cliente',
+      documentoId: ativa.id,
+      arquivo: ativa.arquivo,
+      signUrl: ativa.zapsignSignUrl || null,
+    });
+  }
+
+  const dados = normalizarDadosProcuracao(req.body, cliente);
+  const faltantes = validarDadosProcuracao(dados);
+  if (faltantes.length) return res.status(400).json({ erro: `preencha: ${faltantes.join(', ')}`, campos: faltantes });
+  const pdf = gerarPdfProcuracao(dados);
+  const nomeOriginal = `PROCURAÇÃO - ${dados.nome}.pdf`;
+  const arquivoId = await salvarArquivo(pdf, nomeOriginal, 'application/pdf');
+  const documento = {
+    id: nextId(db.documentos),
+    nome: 'PROCURAÇÃO',
+    clienteId: cliente.id,
+    processoId: req.body.processoId ? Number(req.body.processoId) : null,
+    tipo: 'Procuração',
+    categoriaPOP: '01',
+    arquivo: `/uploads/${arquivoId}`,
+    nomeOriginal,
+    origem: 'gerada-crm',
+    dadosProcuracao: dados,
+    statusAssinatura: 'Gerada',
+    criadoEm: new Date().toISOString(),
+  };
+  db.documentos.push(documento);
+  atualizarClienteComDadosProcuracao(cliente, dados);
+  auditar(req, db, 'gerou', 'documentos', documento, `Procuração em PDF de ${cliente.nome}`);
+  await save(db);
+
+  await sincronizarDocumentoDrive(cliente, documento, pdf, 'application/pdf');
+  let zapsign = null;
+  let aviso = null;
+  if (req.body.enviarZapSign !== false) {
+    try {
+      zapsign = await enviarDocumentoProcuracaoZapSign(documento, cliente, pdf);
+      auditar(req, db, 'enviou para assinatura', 'documentos', documento, `ZapSign: ${documento.zapsignStatus}`);
+    } catch (erro) {
+      documento.zapsignErro = String(erro.message || erro).slice(0, 300);
+      aviso = `O PDF foi salvo, mas ${documento.zapsignErro}`;
+    }
+  }
+  await save(db);
+  res.status(201).json({ documento, zapsign, aviso });
+});
+
+app.post('/api/documentos/:id/procuracao/enviar-zapsign', async (req, res) => {
+  if (!process.env.ZAPSIGN_API_TOKEN) return res.status(503).json({ erro: 'adicione o token da API da ZapSign na Render' });
+  const db = await load();
+  const documento = db.documentos.find((item) => item.id === Number(req.params.id) && item.tipo === 'Procuração');
+  if (!documento) return res.status(404).json({ erro: 'procuração não encontrada' });
+  if (documento.zapsignToken) return res.status(409).json({ erro: 'esta procuração já foi enviada à ZapSign', signUrl: documento.zapsignSignUrl || null });
+  const cliente = db.clientes.find((item) => item.id === documento.clienteId);
+  if (!cliente) return res.status(404).json({ erro: 'cliente não encontrado' });
+  const arquivoId = Number(String(documento.arquivo || '').split('/').pop());
+  const arquivo = await buscarArquivo(arquivoId);
+  if (!arquivo) return res.status(404).json({ erro: 'PDF da procuração não encontrado' });
+  const zapsign = await enviarDocumentoProcuracaoZapSign(documento, cliente, arquivo.dados);
+  auditar(req, db, 'enviou para assinatura', 'documentos', documento, `ZapSign: ${documento.zapsignStatus}`);
+  await save(db);
+  res.json({ documento, zapsign });
 });
 
 app.post('/api/integracoes/zapsign/contratos/:id/sincronizar', async (req, res) => {
