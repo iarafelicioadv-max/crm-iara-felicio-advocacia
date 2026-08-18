@@ -548,7 +548,7 @@ function renderFinanceiro() {
     const links = [c.documentoDriveUrl ? `<a href="${c.documentoDriveUrl}" target="_blank" rel="noopener">Drive</a>` : '', c.zapsignToken ? '<span class="badge risco-baixo">ZapSign</span>' : ''].filter(Boolean).join(' ');
     return `<tr><td>${nomeCliente(c.clienteId)}</td><td><strong>${c.descricao}</strong><div class="contract-links">${links}</div></td><td>${c.numeroParcelasCliente || 1}× ${moeda(c.valorParcelaCliente)}</td><td>${moeda(c.valorTotal)}${c.honorarioExitoPercentual ? `<br><small>+ ${c.honorarioExitoPercentual}% de êxito</small>` : ''}</td><td>${moeda(c.valorLiquidoPrevisto)}<br><small>tarifas: ${moeda(c.taxaCartaoValor)}</small></td><td>${dataBr(c.proximoVencimento)}<br><small>${moeda(c.proximaParcelaValor)}</small><br><span class="badge ${c.vencido ? 'risco-critico' : 'risco-baixo'}">${situacao}</span></td><td>${assinatura}</td><td><button class="btn-secondary btn-small" onclick="verContrato(${c.id})">Detalhes</button></td></tr>`;
   }).join('') || '<tr><td colspan="8">Nenhum contrato cadastrado.</td></tr>';
-  document.querySelector('#tabela-pagamentos-soltos tbody').innerHTML = (f.pagamentosSemContrato || []).map((p) => `<tr><td>${dataBr(p.data)}</td><td>${p.descricao || 'Recebimento'}</td><td>${moeda(p.valor)}</td></tr>`).join('') || '<tr><td colspan="3">Nenhum recebimento sem contrato.</td></tr>';
+  document.querySelector('#tabela-pagamentos-soltos tbody').innerHTML = (f.pagamentosSemContrato || []).map((p) => `<tr><td>${dataBr(p.data)}</td><td>${p.descricao || 'Recebimento'}</td><td>${moeda(p.valor)}</td><td><button class="btn-secondary btn-small" onclick="editarPagamento(${p.id})">Corrigir e vincular</button></td></tr>`).join('') || '<tr><td colspan="4">Nenhum recebimento sem contrato.</td></tr>';
 }
 
 function verContrato(id) {
@@ -677,6 +677,20 @@ function abrirModalPagamento(contratoId = null, valorSugerido = null) {
   modalBox.innerHTML = `<h3>Registrar recebimento</h3><label>Contrato (deixe vazio se ainda não conciliado)</label><select id="f-contrato"><option value="">— não conciliado —</option>${opcoes}</select><label>Data</label><input id="f-data" type="date" value="${new Date().toISOString().slice(0, 10)}"><label>Valor líquido recebido</label><input id="f-valor" type="number" min="0" step="0.01" value="${valorSugerido || ''}"><label>Descrição / comprovante</label><input id="f-descricao" placeholder="Ex.: Repasse líquido da operadora do cartão"><div class="modal-actions"><button class="btn-secondary" onclick="fecharModal()">Cancelar</button><button class="btn-primary" onclick="salvarPagamento()">Salvar</button></div>`;
   overlay.classList.add('active');
   if (contratoId) document.getElementById('f-contrato').value = String(contratoId);
+}
+function editarPagamento(id) {
+  const pagamento = state.pagamentos.find((p) => p.id === id);
+  if (!pagamento) return;
+  const opcoes = state.contratos.map((c) => `<option value="${c.id}">${c.descricao} · ${nomeCliente(c.clienteId)}</option>`).join('');
+  modalBox.innerHTML = `<h3>Corrigir e conciliar recebimento</h3><label>Contrato</label><select id="f-contrato"><option value="">— não conciliado —</option>${opcoes}</select><label>Data efetiva do crédito</label><input id="f-data" type="date" value="${pagamento.data || ''}"><label>Valor líquido recebido</label><input id="f-valor" type="number" min="0" step="0.01" value="${pagamento.valor || ''}"><label>Descrição / comprovante</label><input id="f-descricao" value="${pagamento.descricao || ''}"><div class="modal-actions"><button class="btn-secondary" onclick="fecharModal()">Cancelar</button><button class="btn-primary" onclick="salvarEdicaoPagamento(${id})">Salvar correção</button></div>`;
+  overlay.classList.add('active');
+  document.getElementById('f-contrato').value = pagamento.contratoId ? String(pagamento.contratoId) : '';
+}
+async function salvarEdicaoPagamento(id) {
+  try {
+    await api(`/api/pagamentos/${id}`, { method:'PUT', body:JSON.stringify({ contratoId:Number(document.getElementById('f-contrato').value)||null, data:document.getElementById('f-data').value, valor:Number(document.getElementById('f-valor').value), descricao:document.getElementById('f-descricao').value }) });
+    fecharModal(); await carregarTudo();
+  } catch (e) { alert(e.message); }
 }
 async function salvarPagamento() {
   try {
