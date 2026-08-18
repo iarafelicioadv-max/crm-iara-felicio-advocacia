@@ -49,7 +49,9 @@ Nunca grave os dois segredos no GitHub. O valor bruto registra o contrato; o flu
 
 ## Integração com a pasta CLIENTES do Google Drive
 
-Ao criar uma cliente, o CRM cria ou reaproveita uma pasta com o nome dela dentro de `CLIENTES`. Arquivos enviados pelo portal documental ou anexados no cadastro são mantidos no banco do CRM e também copiados para essa pasta. Se o Google estiver indisponível, o cadastro não é perdido: o item fica como pendente e pode ser reenviado pelo botão de nuvem na lista de clientes.
+Ao criar uma cliente, o CRM cria ou reaproveita uma pasta com o nome dela dentro de `CLIENTES` e garante quatro subpastas: `CONTRATO DE HONORÁRIOS`, `PETIÇÃO INICIAL`, `ORIGINAIS` e `AUDITORIA`. O número `01` fica reservado para a petição inicial; os documentos de instrução são ordenados dinamicamente a partir de `02`, sem lacunas. O contrato de honorários permanece em sua pasta própria e não participa dessa numeração.
+
+Arquivos enviados pelo portal documental ou anexados no cadastro são mantidos no banco do CRM, preservados com o nome de origem em `ORIGINAIS` e copiados em versão processual para `PETIÇÃO INICIAL`. A automação tenta converter a versão processual para PDF e registra quando a conversão exige conferência. Se o Google estiver indisponível, o cadastro não é perdido: o item fica como pendente e pode ser reenviado pelo botão de nuvem na lista de clientes.
 
 A integração usa um Google Apps Script executado pela conta proprietária dos arquivos. Isso é necessário porque contas de serviço não possuem cota de armazenamento no “Meu Drive”.
 
@@ -61,7 +63,9 @@ A integração usa um Google Apps Script executado pela conta proprietária dos 
 4. Cadastre na Render:
    - `GOOGLE_DRIVE_WEBHOOK_URL`: URL `/exec` fornecida pela implantação do Apps Script.
    - `GOOGLE_DRIVE_SYNC_SECRET`: o mesmo valor de `SYNC_SECRET`. Marque como segredo.
-5. Faça novo deploy e use o botão de nuvem de uma cliente existente para validar a pasta e copiar documentos pendentes.
+5. Faça novo deploy e use o botão de nuvem de uma cliente existente para validar a pasta, criar a estrutura e copiar documentos pendentes.
+
+O Apps Script também instala um monitor periódico de dez minutos. Assim, pastas criadas manualmente dentro de `CLIENTES` recebem a mesma estrutura. Se a conta solicitar autorização para esse monitor, execute uma vez a função `monitorarNovasPastasClientes` no editor e aceite as permissões.
 
 Nunca grave a chave de sincronização no GitHub. A automação cobre documentos que passam pelo CRM. Arquivos recebidos diretamente por e-mail, WhatsApp ou navegador precisam ser enviados ao portal da cliente ou movidos para a pasta de entrada antes da organização.
 

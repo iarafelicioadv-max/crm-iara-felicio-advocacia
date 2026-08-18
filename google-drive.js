@@ -15,6 +15,14 @@ function configuracaoDriveValida(env = process.env) {
   );
 }
 
+function ordemPreferencialDocumento(categoriaPOP) {
+  const codigo = String(categoriaPOP || '').trim();
+  if (/^\d{2}$/.test(codigo)) return Number(codigo);
+  const codigoPorCaso = codigo.match(/^[A-Z]\d{2}-(\d{2})$/i);
+  if (codigoPorCaso) return Number(codigoPorCaso[1]);
+  return 999;
+}
+
 class GoogleDriveCRM {
   constructor({ webhookUrl, syncSecret, fetchImpl = global.fetch }) {
     this.webhookUrl = String(webhookUrl || '').trim();
@@ -48,18 +56,34 @@ class GoogleDriveCRM {
       clienteId: String(clienteId || ''),
       nomeCliente: nome,
     });
-    return { id: retorno.pastaId, name: retorno.nome, webViewLink: retorno.pastaUrl };
+    return {
+      id: retorno.pastaId,
+      name: retorno.nome,
+      webViewLink: retorno.pastaUrl,
+      estrutura: retorno.estrutura || null,
+    };
   }
 
-  async enviarDocumento({ pastaId, documentoId, nome, mimetype, buffer }) {
+  async enviarDocumento({ pastaId, documentoId, nome, nomeOriginal, nomeCliente, categoriaPOP, mimetype, buffer }) {
     const retorno = await this.requisitar('enviarDocumento', {
       pastaId,
       documentoId: String(documentoId),
       nome: String(nome || 'Documento'),
+      nomeOriginal: String(nomeOriginal || nome || 'Documento'),
+      nomeCliente: nomePastaCliente(nomeCliente),
+      categoriaPOP: String(categoriaPOP || ''),
+      ordemPreferencial: ordemPreferencialDocumento(categoriaPOP),
       mimetype: mimetype || 'application/octet-stream',
       conteudoBase64: Buffer.from(buffer).toString('base64'),
     });
-    return { id: retorno.arquivoId, name: retorno.nome, webViewLink: retorno.arquivoUrl };
+    return {
+      id: retorno.arquivoId,
+      name: retorno.nome,
+      webViewLink: retorno.arquivoUrl,
+      originalId: retorno.originalId || null,
+      originalUrl: retorno.originalUrl || null,
+      conversaoStatus: retorno.conversaoStatus || null,
+    };
   }
 }
 
@@ -77,4 +101,5 @@ module.exports = {
   configuracaoDriveValida,
   criarDrivePeloAmbiente,
   nomePastaCliente,
+  ordemPreferencialDocumento,
 };

@@ -104,6 +104,7 @@ async function garantirPastaDriveCliente(cliente) {
     const pasta = await drive.garantirPastaCliente(cliente.nome, cliente.id);
     cliente.driveFolderId = pasta.id;
     cliente.driveFolderUrl = pasta.webViewLink || null;
+    cliente.driveEstrutura = pasta.estrutura || cliente.driveEstrutura || null;
     cliente.driveSyncStatus = 'Sincronizado';
     cliente.driveSyncErro = null;
     cliente.driveSincronizadoEm = new Date().toISOString();
@@ -129,19 +130,22 @@ async function sincronizarDocumentoDrive(cliente, documento, buffer, mimetype) {
     return null;
   }
   try {
-    const extensaoOriginal = path.extname(String(documento.nomeOriginal || ''));
-    const nomePadronizado = documento.categoriaPOP
-      ? `${documento.categoriaPOP} - ${documento.nome}${extensaoOriginal}`
-      : (documento.nomeOriginal || documento.nome);
     const arquivo = await drive.enviarDocumento({
       pastaId: pasta.id,
       documentoId: documento.id,
-      nome: nomePadronizado,
+      nome: documento.nome,
+      nomeOriginal: documento.nomeOriginal || documento.nome,
+      nomeCliente: cliente.nome,
+      categoriaPOP: documento.categoriaPOP || null,
       mimetype,
       buffer,
     });
     documento.driveFileId = arquivo.id;
     documento.driveFileUrl = arquivo.webViewLink || null;
+    documento.driveNomeFinal = arquivo.name || null;
+    documento.driveOriginalId = arquivo.originalId || null;
+    documento.driveOriginalUrl = arquivo.originalUrl || null;
+    documento.driveConversaoStatus = arquivo.conversaoStatus || null;
     documento.driveSyncStatus = 'Sincronizado';
     documento.driveSyncErro = null;
     documento.driveSincronizadoEm = new Date().toISOString();
