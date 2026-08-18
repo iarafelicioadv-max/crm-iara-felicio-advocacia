@@ -183,6 +183,11 @@ h3 { font-family: 'Playfair Display', serif; font-size: 18px; margin: 0 0 16px; 
   font-size: 14px; font-family: inherit;
 }
 .modal-actions { margin-top: 20px; display: flex; justify-content: flex-end; gap: 10px; }
+.modal-actions { flex-wrap: wrap; align-items: center; }
+.modal-actions a { text-decoration: none; }
+.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; }
+.form-span-2 { grid-column: 1 / -1; }
+.erro-inline { color: #b42318; background: #fee4e2; border-radius: 8px; padding: 10px 12px; margin-top: 12px; font-size: 13px; }
 .btn-secondary {
   background: none; border: 1px solid var(--border); padding: 10px 18px; border-radius: 8px;
   cursor: pointer; font-size: 14px; font-family: inherit;
@@ -196,6 +201,8 @@ h3 { font-family: 'Playfair Display', serif; font-size: 18px; margin: 0 0 16px; 
   .cards { grid-template-columns: repeat(2, 1fr); }
   .reports-grid { grid-template-columns: 1fr; }
   .hoje-grid, .projection-grid { grid-template-columns: 1fr; }
+  .form-grid { grid-template-columns: 1fr; }
+  .form-span-2 { grid-column: auto; }
 }
 
 /* ROTINA DOCUMENTAL - checklist (usado na aba da equipe e na pagina publica do cliente) */

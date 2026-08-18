@@ -268,6 +268,7 @@ function renderClientes() {
       <td>${c.driveFolderUrl ? `<a href="${c.driveFolderUrl}" target="_blank" rel="noopener">Abrir pasta</a>` : `<span class="card-label" title="${textoSeguro(c.driveSyncErro || '')}">${textoSeguro(c.driveSyncStatus || 'Pendente')}</span>`}</td>
       <td>
         <button class="btn-icon" title="Editar" onclick="abrirModalCliente(${c.id})">✏️</button>
+        <button class="btn-icon" title="Preencher e enviar procuração" onclick="abrirModalProcuracao(${c.id})">🖋️</button>
         <button class="btn-icon" title="Solicitar documentos" onclick="solicitarDocumentosCliente(${c.id})">🔗</button>
         <button class="btn-icon" title="Criar ou sincronizar pasta no Drive" onclick="sincronizarDriveCliente(${c.id})">☁️</button>
         <button class="btn-icon" title="Excluir" onclick="excluir('clientes', ${c.id})">🗑️</button>
@@ -284,8 +285,24 @@ function renderDocumentos() {
       <td>${d.clienteId ? nomeCliente(d.clienteId) : '—'}</td>
       <td>${d.processoId ? nomeProcesso(d.processoId) : '—'}</td>
       <td>${d.driveFileUrl ? `<a href="${d.driveFileUrl}" target="_blank" rel="noopener">Abrir no Drive</a>` : `<span class="card-label" title="${textoSeguro(d.driveSyncErro || '')}">${textoSeguro(d.driveSyncStatus || 'Pendente')}</span>`}</td>
-      <td><button class="btn-icon" title="Excluir" onclick="excluir('documentos', ${d.id})">🗑️</button></td>
-    </tr>`).join('') || '<tr><td colspan="6">Nenhum documento cadastrado ainda.</td></tr>';
+      <td>${d.tipo === 'Procuração' ? `<span class="badge ${d.zapsignStatus === 'Assinado' ? 'risco-baixo' : 'risco-medio'}">${textoSeguro(d.zapsignStatus || d.statusAssinatura || 'Gerada')}</span>${d.zapsignSignUrl ? ` <button class="btn-secondary btn-small" onclick="copiarLinkAssinatura('${textoSeguro(d.zapsignSignUrl)}')">Copiar link</button>` : ''}` : '—'}</td>
+      <td>${d.tipo === 'Procuração' && !d.zapsignToken ? `<button class="btn-secondary btn-small" onclick="enviarProcuracaoZapSign(${d.id})">Enviar ZapSign</button>` : ''}<button class="btn-icon" title="Excluir" onclick="excluir('documentos', ${d.id})">🗑️</button></td>
+    </tr>`).join('') || '<tr><td colspan="7">Nenhum documento cadastrado ainda.</td></tr>';
+}
+
+function copiarLinkAssinatura(link) {
+  navigator.clipboard.writeText(link)
+    .then(() => alert('Link de assinatura copiado.'))
+    .catch(() => window.open(link, '_blank', 'noopener'));
+}
+
+async function enviarProcuracaoZapSign(id) {
+  try {
+    const resultado = await api(`/api/documentos/${id}/procuracao/enviar-zapsign`, { method: 'POST' });
+    await carregarTudo();
+    if (resultado.zapsign?.signUrl) copiarLinkAssinatura(resultado.zapsign.signUrl);
+    else alert('Procuração enviada à ZapSign.');
+  } catch (erro) { alert(erro.message); }
 }
 
 async function sincronizarDriveCliente(id) {
@@ -760,6 +777,106 @@ async function salvarCliente(id) {
       botaoSalvar.disabled = false;
       botaoSalvar.textContent = 'Salvar';
     }
+  }
+}
+
+function abrirModalProcuracao(id) {
+  const c = state.clientes.find((item) => item.id === Number(id));
+  if (!c) return;
+  const ativa = state.documentos.find((item) =>
+    item.clienteId === c.id && item.tipo === 'Procuração' &&
+    !['Assinado', 'Recusado', 'Expirado', 'Excluído'].includes(item.zapsignStatus)
+  );
+  modalBox.classList.add('modal-wide');
+  if (ativa) {
+    modalBox.innerHTML = `
+      <h3>Procuração de ${textoSeguro(c.nome)}</h3>
+      <div class="notice">Já existe uma procuração ativa. Para evitar duas procurações ocupando a numeração documental, utilize o documento existente.</div>
+      <p><strong>Status:</strong> ${textoSeguro(ativa.zapsignStatus || ativa.statusAssinatura || 'Gerada')}</p>
+      ${ativa.zapsignErro ? `<p class="erro-inline">${textoSeguro(ativa.zapsignErro)}</p>` : ''}
+      <div class="modal-actions">
+        <a class="btn-secondary" href="${ativa.arquivo}" target="_blank" rel="noopener">Abrir PDF</a>
+        ${ativa.driveFileUrl ? `<a class="btn-secondary" href="${ativa.driveFileUrl}" target="_blank" rel="noopener">Abrir no Drive</a>` : ''}
+        ${ativa.zapsignSignUrl ? `<button class="btn-primary" onclick="copiarLinkAssinatura('${textoSeguro(ativa.zapsignSignUrl)}')">Copiar link de assinatura</button>` : `<button class="btn-primary" onclick="enviarProcuracaoZapSign(${ativa.id})">Enviar à ZapSign</button>`}
+        <button class="btn-secondary" onclick="fecharModal()">Fechar</button>
+      </div>`;
+    overlay.classList.add('active');
+    return;
+  }
+  const hoje = new Date().toISOString().slice(0, 10);
+  modalBox.innerHTML = `
+    <h3>Gerar procuração</h3>
+    <div class="notice">Confira os dados da outorgante. Ao confirmar, o CRM gera o PDF, salva como <strong>02 - PROCURAÇÃO</strong> no Drive e o envia à ZapSign. Se houver e-mail, a ZapSign envia o convite automaticamente; o WhatsApp automático permanece desligado.</div>
+    <div class="form-grid">
+      <div class="form-span-2"><label>Nome completo</label><input id="p-nome" value="${textoSeguro(c.nome || '')}"></div>
+      <div><label>CPF</label><input id="p-cpf" value="${textoSeguro(c.documento || '')}" placeholder="000.000.000-00"></div>
+      <div><label>RG</label><input id="p-rg" value="${textoSeguro(c.rg || '')}"></div>
+      <div><label>Órgão emissor</label><input id="p-orgao" value="${textoSeguro(c.orgaoEmissor || 'Instituto de Identificação PC/MG')}"></div>
+      <div><label>Nacionalidade</label><input id="p-nacionalidade" value="${textoSeguro(c.nacionalidade || 'brasileira')}"></div>
+      <div><label>Estado civil</label><input id="p-estado-civil" value="${textoSeguro(c.estadoCivil || '')}" placeholder="Ex.: solteira"></div>
+      <div><label>Profissão</label><input id="p-profissao" value="${textoSeguro(c.profissao || '')}"></div>
+      <div class="form-span-2"><label>Endereço completo</label><textarea id="p-endereco" rows="3" placeholder="Rua, número, complemento, bairro, CEP, cidade e estado">${textoSeguro(c.endereco || '')}</textarea></div>
+      <div><label>E-mail para a ZapSign</label><input id="p-email" type="email" value="${textoSeguro(c.email || '')}"></div>
+      <div><label>Telefone</label><input id="p-telefone" value="${textoSeguro(c.telefone || '')}"></div>
+      <div><label>Local da assinatura</label><input id="p-local" value="${textoSeguro(c.cidade || 'Caratinga')}"></div>
+      <div><label>Data da procuração</label><input id="p-data" type="date" value="${hoje}"></div>
+      <div class="form-span-2"><label>Processo vinculado (opcional)</label><select id="p-processo">${opcoesProcessos()}</select></div>
+    </div>
+    <div id="p-erro" class="erro-inline" style="display:none;"></div>
+    <div class="modal-actions">
+      <button class="btn-secondary" onclick="fecharModal()">Cancelar</button>
+      <button class="btn-primary" id="p-enviar" onclick="gerarProcuracao(${c.id})">Gerar PDF e enviar à ZapSign</button>
+    </div>`;
+  overlay.classList.add('active');
+}
+
+async function gerarProcuracao(clienteId) {
+  const botao = document.getElementById('p-enviar');
+  const erro = document.getElementById('p-erro');
+  botao.disabled = true;
+  botao.textContent = 'Gerando e enviando...';
+  erro.style.display = 'none';
+  try {
+    const resultado = await api(`/api/clientes/${clienteId}/procuracao`, {
+      method: 'POST',
+      body: JSON.stringify({
+        nome: document.getElementById('p-nome').value,
+        cpf: document.getElementById('p-cpf').value,
+        rg: document.getElementById('p-rg').value,
+        orgaoEmissor: document.getElementById('p-orgao').value,
+        nacionalidade: document.getElementById('p-nacionalidade').value,
+        estadoCivil: document.getElementById('p-estado-civil').value,
+        profissao: document.getElementById('p-profissao').value,
+        enderecoCompleto: document.getElementById('p-endereco').value,
+        email: document.getElementById('p-email').value,
+        telefone: document.getElementById('p-telefone').value,
+        localAssinatura: document.getElementById('p-local').value,
+        dataAssinatura: document.getElementById('p-data').value,
+        processoId: Number(document.getElementById('p-processo').value) || null,
+        enviarZapSign: true,
+      }),
+    });
+    await carregarTudo();
+    const d = resultado.documento;
+    const z = resultado.zapsign;
+    modalBox.innerHTML = `
+      <h3>Procuração gerada</h3>
+      <div class="empty-success">O PDF foi criado e registrado na rotina documental.</div>
+      ${resultado.aviso ? `<div class="notice" style="margin-top:14px;">${textoSeguro(resultado.aviso)}</div>` : ''}
+      <p><strong>Drive:</strong> ${d.driveSyncStatus === 'Sincronizado' ? 'salva como 02 - PROCURAÇÃO' : textoSeguro(d.driveSyncStatus || 'pendente')}</p>
+      <p><strong>ZapSign:</strong> ${textoSeguro(d.zapsignStatus || 'aguardando envio')}</p>
+      ${z?.envioAutomaticoEmail ? '<p>O convite de assinatura foi enviado automaticamente ao e-mail informado.</p>' : (z?.signUrl ? '<p>Copie o link abaixo e encaminhe à cliente.</p>' : '')}
+      <div class="modal-actions">
+        <a class="btn-secondary" href="${d.arquivo}" target="_blank" rel="noopener">Abrir PDF</a>
+        ${d.driveFileUrl ? `<a class="btn-secondary" href="${d.driveFileUrl}" target="_blank" rel="noopener">Abrir no Drive</a>` : ''}
+        ${z?.signUrl ? `<button class="btn-primary" onclick="copiarLinkAssinatura('${textoSeguro(z.signUrl)}')">Copiar link de assinatura</button>` : `<button class="btn-primary" onclick="enviarProcuracaoZapSign(${d.id})">Tentar ZapSign novamente</button>`}
+        <button class="btn-secondary" onclick="fecharModal()">Fechar</button>
+      </div>`;
+  } catch (e) {
+    erro.textContent = e.message;
+    erro.style.display = 'block';
+    botao.disabled = false;
+    botao.textContent = 'Gerar PDF e enviar à ZapSign';
   }
 }
 
