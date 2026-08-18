@@ -148,6 +148,11 @@ h3 { font-family: 'Playfair Display', serif; font-size: 18px; margin: 0 0 16px; 
 .conversation-item { max-width: 88%; background: #f5f2ef; border-radius: 10px; padding: 10px 12px; white-space: pre-wrap; }
 .conversation-item.saida { align-self: flex-end; background: #e3f7e8; }
 .conversation-item small { display: block; color: var(--text-light); margin-top: 5px; font-size: 11px; }
+.conversation-composer { border-top: 1px solid var(--border); margin-top: 14px; padding-top: 14px; }
+.conversation-composer textarea { width: 100%; resize: vertical; min-height: 72px; }
+.composer-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 8px; }
+.composer-footer small { color: var(--text-light); }
+.conversation-disabled { background: #fff6ed; border: 1px solid #fedf89; color: #93370d; border-radius: 8px; margin-top: 14px; padding: 10px 12px; font-size: 13px; }
 
 /* REPORTS */
 .reports-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }

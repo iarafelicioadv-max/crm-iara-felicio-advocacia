@@ -107,7 +107,7 @@
         <button class="btn-primary" onclick="abrirModalCliente()">+ Novo Cliente</button>
       </div>
       <table class="table" id="tabela-clientes">
-        <thead><tr><th>Nome</th><th>CPF/CNPJ</th><th>Telefone</th><th>E-mail</th><th>Ações</th></tr></thead>
+        <thead><tr><th>Nome</th><th>CPF/CNPJ</th><th>Telefone</th><th>E-mail</th><th>Drive</th><th>Ações</th></tr></thead>
         <tbody></tbody>
       </table>
     </section>
@@ -119,7 +119,7 @@
         <button class="btn-primary" onclick="abrirModalDocumento()">+ Novo Documento</button>
       </div>
       <table class="table" id="tabela-documentos">
-        <thead><tr><th>Nome</th><th>Tipo</th><th>Cliente</th><th>Processo</th><th>Ações</th></tr></thead>
+        <thead><tr><th>Nome</th><th>Tipo</th><th>Cliente</th><th>Processo</th><th>Drive</th><th>Ações</th></tr></thead>
         <tbody></tbody>
       </table>
     </section>
@@ -175,7 +175,7 @@
       <div class="panel panel-prazos"><h3>Recebimentos sem contrato vinculado</h3><table class="table" id="tabela-pagamentos-soltos"><thead><tr><th>Data</th><th>Descrição</th><th>Valor</th></tr></thead><tbody></tbody></table></div>
     </section>
 
-    <section id="view-leads" class="view"><div class="view-header"><h2>Funil de Leads</h2><button class="btn-primary" onclick="abrirModalLead()">+ Novo Lead</button></div><div id="whatsapp-status" class="whatsapp-status pendente"></div><div class="notice">Mensagens recebidas pela API oficial entram em “Novo lead” sem duplicar o telefone. O botão WhatsApp continua disponível para responder pelo aplicativo.</div><div class="kanban-board" id="leads-board"></div></section>
+    <section id="view-leads" class="view"><div class="view-header"><h2>Funil de Leads</h2><button class="btn-primary" onclick="abrirModalLead()">+ Novo Lead</button></div><div id="whatsapp-status" class="whatsapp-status pendente"></div><div class="notice">Mensagens recebidas pela API oficial entram em “Novo lead” sem duplicar o telefone. Abra o histórico do lead para acompanhar a conversa e, depois da ativação do novo número, responder pelo próprio CRM.</div><div class="kanban-board" id="leads-board"></div></section>
 
   </main>
 </div>

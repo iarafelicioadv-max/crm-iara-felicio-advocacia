@@ -264,12 +264,14 @@ function renderClientes() {
       <td>${c.documento || '—'}</td>
       <td>${c.telefone || '—'}</td>
       <td>${c.email || '—'}</td>
+      <td>${c.driveFolderUrl ? `<a href="${c.driveFolderUrl}" target="_blank" rel="noopener">Abrir pasta</a>` : `<span class="card-label" title="${textoSeguro(c.driveSyncErro || '')}">${textoSeguro(c.driveSyncStatus || 'Pendente')}</span>`}</td>
       <td>
         <button class="btn-icon" title="Editar" onclick="abrirModalCliente(${c.id})">✏️</button>
         <button class="btn-icon" title="Solicitar documentos" onclick="solicitarDocumentosCliente(${c.id})">🔗</button>
+        <button class="btn-icon" title="Criar ou sincronizar pasta no Drive" onclick="sincronizarDriveCliente(${c.id})">☁️</button>
         <button class="btn-icon" title="Excluir" onclick="excluir('clientes', ${c.id})">🗑️</button>
       </td>
-    </tr>`).join('') || '<tr><td colspan="5">Nenhum cliente cadastrado ainda.</td></tr>';
+    </tr>`).join('') || '<tr><td colspan="6">Nenhum cliente cadastrado ainda.</td></tr>';
 }
 
 function renderDocumentos() {
@@ -280,8 +282,19 @@ function renderDocumentos() {
       <td>${d.tipo || '—'}</td>
       <td>${d.clienteId ? nomeCliente(d.clienteId) : '—'}</td>
       <td>${d.processoId ? nomeProcesso(d.processoId) : '—'}</td>
+      <td>${d.driveFileUrl ? `<a href="${d.driveFileUrl}" target="_blank" rel="noopener">Abrir no Drive</a>` : `<span class="card-label" title="${textoSeguro(d.driveSyncErro || '')}">${textoSeguro(d.driveSyncStatus || 'Pendente')}</span>`}</td>
       <td><button class="btn-icon" title="Excluir" onclick="excluir('documentos', ${d.id})">🗑️</button></td>
-    </tr>`).join('') || '<tr><td colspan="5">Nenhum documento cadastrado ainda.</td></tr>';
+    </tr>`).join('') || '<tr><td colspan="6">Nenhum documento cadastrado ainda.</td></tr>';
+}
+
+async function sincronizarDriveCliente(id) {
+  try {
+    const resultado = await api(`/api/clientes/${id}/drive/sincronizar`, { method: 'POST' });
+    await carregarTudo();
+    alert(`Pasta sincronizada. ${resultado.documentosSincronizados || 0} documento(s) enviado(s) ao Drive.`);
+  } catch (erro) {
+    alert(erro.message);
+  }
 }
 
 // ---------- Rotina Documental ----------
@@ -431,7 +444,7 @@ function renderLeads() {
   if (status) {
     status.className = `whatsapp-status ${state.whatsapp.conectado ? 'conectado' : 'pendente'}`;
     status.innerHTML = state.whatsapp.conectado
-      ? `<strong>WhatsApp conectado à Meta</strong><span>${state.whatsapp.ultimaEntrada ? `Última mensagem recebida em ${new Date(state.whatsapp.ultimaEntrada).toLocaleString('pt-BR')}.` : 'Receptor ativo; aguardando a primeira mensagem.'}</span>`
+      ? `<strong>Recebimento conectado à Meta</strong><span>${state.whatsapp.ultimaEntrada ? `Última mensagem recebida em ${new Date(state.whatsapp.ultimaEntrada).toLocaleString('pt-BR')}.` : 'Receptor ativo; aguardando a primeira mensagem.'} ${state.whatsapp.envioConfigurado ? 'Respostas pelo CRM liberadas.' : 'O envio será liberado após o cadastro do novo número.'}</span>`
       : (state.whatsapp.configurado
         ? '<strong>WhatsApp configurado</strong><span>Aguardando a primeira confirmação assinada enviada pela Meta.</span>'
         : '<strong>Receptor instalado no CRM</strong><span>Falta concluir a vinculação no painel da Meta e cadastrar os dois segredos na Render.</span>');
@@ -452,9 +465,30 @@ function telefoneWhatsApp(valor) {
 function abrirHistoricoLead(id) {
   const lead = state.leads.find((item) => item.id === id);
   if (!lead) return;
-  const interacoes = [...(lead.interacoes || [])].sort((a, b) => String(b.criadoEm).localeCompare(String(a.criadoEm)));
-  modalBox.innerHTML = `<h3>Conversas — ${textoSeguro(lead.nome)}</h3><div class="conversation-list">${interacoes.map((item) => `<div class="conversation-item ${item.direcao === 'saida' ? 'saida' : 'entrada'}"><div>${textoSeguro(item.texto || `[${item.tipo || 'mensagem'}]`)}</div><small>${item.criadoEm ? new Date(item.criadoEm).toLocaleString('pt-BR') : ''}${item.status ? ` · ${textoSeguro(item.status)}` : ''}</small></div>`).join('') || '<p>Nenhuma conversa registrada.</p>'}</div><div class="modal-actions"><button class="btn-secondary" onclick="fecharModal()">Fechar</button>${Number(lead.naoLidas || 0) ? `<button class="btn-primary" onclick="marcarLeadComoLido(${lead.id})">Marcar como lidas</button>` : ''}</div>`;
+  const interacoes = [...(lead.interacoes || [])].sort((a, b) => String(a.criadoEm).localeCompare(String(b.criadoEm)));
+  const compositor = state.whatsapp.envioConfigurado
+    ? `<div class="conversation-composer"><label for="resposta-whatsapp">Responder pelo WhatsApp</label><textarea id="resposta-whatsapp" maxlength="4096" rows="3" placeholder="Digite sua mensagem"></textarea><div class="composer-footer"><small>Respostas fora da janela de atendimento podem exigir um modelo aprovado pela Meta.</small><button class="btn-primary" id="btn-enviar-whatsapp" onclick="enviarRespostaWhatsApp(${lead.id})">Enviar</button></div></div>`
+    : '<div class="conversation-disabled">O recebimento está pronto. O envio será liberado amanhã, depois que o novo número e o token da Meta forem cadastrados.</div>';
+  modalBox.innerHTML = `<h3>Conversas — ${textoSeguro(lead.nome)}</h3><div class="conversation-list">${interacoes.map((item) => `<div class="conversation-item ${item.direcao === 'saida' ? 'saida' : 'entrada'}"><div>${textoSeguro(item.texto || `[${item.tipo || 'mensagem'}]`)}</div><small>${item.criadoEm ? new Date(item.criadoEm).toLocaleString('pt-BR') : ''}${item.status ? ` · ${textoSeguro(item.status)}` : ''}</small></div>`).join('') || '<p>Nenhuma conversa registrada.</p>'}</div>${compositor}<div class="modal-actions"><button class="btn-secondary" onclick="fecharModal()">Fechar</button>${Number(lead.naoLidas || 0) ? `<button class="btn-primary" onclick="marcarLeadComoLido(${lead.id})">Marcar como lidas</button>` : ''}</div>`;
   overlay.classList.add('active');
+  const lista = modalBox.querySelector('.conversation-list');
+  if (lista) lista.scrollTop = lista.scrollHeight;
+}
+
+async function enviarRespostaWhatsApp(id) {
+  const campo = document.getElementById('resposta-whatsapp');
+  const botao = document.getElementById('btn-enviar-whatsapp');
+  const texto = String(campo ? campo.value : '').trim();
+  if (!texto) return alert('Digite a mensagem antes de enviar.');
+  if (botao) botao.disabled = true;
+  try {
+    await api(`/api/leads/${id}/whatsapp/mensagens`, { method: 'POST', body: JSON.stringify({ texto }) });
+    await carregarTudo();
+    abrirHistoricoLead(id);
+  } catch (erro) {
+    alert(erro.message);
+    if (botao) botao.disabled = false;
+  }
 }
 
 async function marcarLeadComoLido(id) {
@@ -641,7 +675,15 @@ function abrirModalCliente(id) {
   overlay.classList.add('active');
 }
 
+let salvandoCliente = false;
 async function salvarCliente(id) {
+  if (salvandoCliente) return;
+  salvandoCliente = true;
+  const botaoSalvar = modalBox.querySelector('.btn-primary');
+  if (botaoSalvar) {
+    botaoSalvar.disabled = true;
+    botaoSalvar.textContent = 'Salvando...';
+  }
   const body = {
     nome: document.getElementById('f-nome').value,
     documento: document.getElementById('f-documento').value,
@@ -649,10 +691,18 @@ async function salvarCliente(id) {
     email: document.getElementById('f-email').value,
     endereco: document.getElementById('f-endereco').value,
   };
-  if (id) await api(`/api/clientes/${id}`, { method: 'PUT', body: JSON.stringify(body) });
-  else await api('/api/clientes', { method: 'POST', body: JSON.stringify(body) });
-  fecharModal();
-  await carregarTudo();
+  try {
+    if (id) await api(`/api/clientes/${id}`, { method: 'PUT', body: JSON.stringify(body) });
+    else await api('/api/clientes', { method: 'POST', body: JSON.stringify(body) });
+    fecharModal();
+    await carregarTudo();
+  } finally {
+    salvandoCliente = false;
+    if (botaoSalvar?.isConnected) {
+      botaoSalvar.disabled = false;
+      botaoSalvar.textContent = 'Salvar';
+    }
+  }
 }
 
 function opcoesClientes(selecionado) {
