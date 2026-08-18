@@ -6,6 +6,8 @@ const bcrypt = require('bcryptjs');
 const cookieSession = require('cookie-session');
 const { load, save, nextId, salvarArquivo, buscarArquivo, removerArquivo } = require('./db');
 const { configuracaoDriveValida, criarDrivePeloAmbiente } = require('./google-drive');
+const { calcularFinanceiro, normalizarContrato } = require('./financeiro');
+const { aplicarEventoZapSign, segredoValido } = require('./zapsign');
 const {
   aplicarWebhookWhatsApp,
   assinaturaValida,
@@ -462,7 +464,60 @@ app.post('/api/publico/rotina/:token/upload', uploadRotina.any(), async (req, re
   res.json({ ok: true, salvos, sincronizadosDrive: documentosNovos.filter(({ doc }) => doc.driveSyncStatus === 'Sincronizado').length });
 });
 
+// A ZapSign chama esta rota sem a sessão do CRM. O segredo é configurado como
+// cabeçalho personalizado no webhook e nunca é devolvido pela aplicação.
+app.post('/api/integracoes/zapsign/webhook', async (req, res) => {
+  const segredo = process.env.ZAPSIGN_WEBHOOK_SECRET;
+  if (!segredo) return res.status(503).json({ erro: 'webhook da ZapSign ainda não configurado' });
+  if (!segredoValido(req.get('x-zapsign-secret'), segredo)) return res.status(401).json({ erro: 'assinatura do webhook inválida' });
+
+  const db = await load();
+  const resultado = aplicarEventoZapSign(db, req.body);
+  if (resultado.aplicado) {
+    if (!db.auditoria) db.auditoria = [];
+    db.auditoria.push({
+      id: nextId(db.auditoria), usuarioId: null, usuarioNome: 'ZapSign', acao: 'atualizou assinatura',
+      recurso: 'contratos', recursoId: resultado.contrato.id,
+      detalhes: `${resultado.evento.evento}: ${resultado.evento.status || 'sem status'}`,
+      criadoEm: new Date().toISOString(),
+    });
+    await save(db);
+  }
+  // Eventos sem contrato correspondente também recebem 200 para não criar
+  // uma fila infinita de novas tentativas na ZapSign.
+  res.json({ recebido: true, aplicado: resultado.aplicado });
+});
+
 app.use('/api', requireAuth);
+
+app.get('/api/integracoes/zapsign/status', async (req, res) => {
+  const db = await load();
+  const integracao = (db.integracoes && db.integracoes.zapsign) || {};
+  res.json({
+    receptorPronto: true,
+    webhookConfigurado: !!process.env.ZAPSIGN_WEBHOOK_SECRET,
+    apiConfigurada: !!process.env.ZAPSIGN_API_TOKEN,
+    ultimoWebhookEm: integracao.ultimoWebhookEm || null,
+    ultimoEvento: integracao.ultimoEvento || null,
+  });
+});
+
+app.post('/api/integracoes/zapsign/contratos/:id/sincronizar', async (req, res) => {
+  if (!process.env.ZAPSIGN_API_TOKEN) return res.status(503).json({ erro: 'adicione o token da API da ZapSign na Render' });
+  const db = await load();
+  const contrato = (db.contratos || []).find((c) => c.id === Number(req.params.id));
+  if (!contrato) return res.status(404).json({ erro: 'contrato não encontrado' });
+  if (!contrato.zapsignToken) return res.status(400).json({ erro: 'informe o token do documento da ZapSign no contrato' });
+
+  const resposta = await fetch(`https://api.zapsign.com.br/api/v1/docs/${encodeURIComponent(contrato.zapsignToken)}/`, {
+    headers: { Authorization: `Bearer ${process.env.ZAPSIGN_API_TOKEN}` },
+  });
+  if (!resposta.ok) return res.status(502).json({ erro: `a ZapSign respondeu ${resposta.status}` });
+  const documento = await resposta.json();
+  const resultado = aplicarEventoZapSign(db, { event_type: 'doc_refreshed', document: documento });
+  await save(db);
+  res.json({ sincronizado: resultado.aplicado, status: contrato.zapsignStatus || null });
+});
 
 app.get('/api/whatsapp/status', async (req, res) => {
   const db = await load();
@@ -610,7 +665,7 @@ function crud(resource) {
 
   app.post(base, async (req, res) => {
     const db = await load();
-    const item = { id: nextId(db[resource]), criadoEm: new Date().toISOString(), ...req.body };
+    let item = { id: nextId(db[resource]), criadoEm: new Date().toISOString(), ...req.body };
     if (resource === 'clientes' && !String(item.nome || '').trim()) return res.status(400).json({ erro: 'nome do cliente é obrigatório' });
     if (resource === 'clientes') {
       const documentoNormalizado = String(item.documento || '').replace(/\D/g, '');
@@ -634,6 +689,7 @@ function crud(resource) {
     if (resource === 'contratos' && (!item.clienteId || !String(item.descricao || '').trim() || Number(item.valorTotal) <= 0)) return res.status(400).json({ erro: 'cliente, descrição e valor do contrato são obrigatórios' });
     if (resource === 'pagamentos' && (!item.data || Number(item.valor) <= 0)) return res.status(400).json({ erro: 'data e valor do pagamento são obrigatórios' });
     if (resource === 'processos') item.numeroNormalizado = String(item.numeroProcesso || item.nome || '').replace(/\D/g, '');
+    if (resource === 'contratos') item = normalizarContrato(item);
     db[resource].push(item);
     auditar(req, db, 'criou', resource, item, item.nome || item.titulo || item.descricao || '');
     await save(db);
@@ -651,6 +707,7 @@ function crud(resource) {
     db[resource][idx] = { ...db[resource][idx], ...req.body, id: Number(req.params.id) };
     if (resource === 'processos') db[resource][idx].numeroNormalizado = String(db[resource][idx].numeroProcesso || db[resource][idx].nome || '').replace(/\D/g, '');
     if (resource === 'tarefas' && db[resource][idx].status === 'Concluída' && !String(db[resource][idx].evidencia || '').trim()) return res.status(400).json({ erro: 'registre a evidência antes de concluir a tarefa' });
+    if (resource === 'contratos') db[resource][idx] = normalizarContrato(db[resource][idx]);
     auditar(req, db, 'atualizou', resource, db[resource][idx], db[resource][idx].nome || db[resource][idx].titulo || db[resource][idx].descricao || '');
     await save(db);
     res.json(db[resource][idx]);
@@ -747,35 +804,6 @@ function calcularControladoria(db) {
 
   const ordem = { 'Crítico': 0, Alto: 1, 'Médio': 2, Baixo: 3 };
   return itens.sort((a, b) => ordem[a.risco] - ordem[b.risco]);
-}
-
-function calcularFinanceiro(db) {
-  const hoje = dataHoje();
-  const contratos = db.contratos || [];
-  const pagamentos = db.pagamentos || [];
-  const totalContratado = contratos.filter((c) => c.status !== 'Cancelado').reduce((s, c) => s + numero(c.valorTotal), 0);
-  const totalRecebido = pagamentos.reduce((s, p) => s + numero(p.valor), 0);
-  const contratosDetalhados = contratos.map((c) => {
-    const recebido = pagamentos.filter((p) => p.contratoId === c.id).reduce((s, p) => s + numero(p.valor), 0);
-    const saldo = Math.max(0, numero(c.valorTotal) - recebido);
-    return { ...c, recebido, saldo, vencido: !!(saldo > 0 && c.proximoVencimento && c.proximoVencimento < hoje) };
-  });
-  const projetar = (dias) => {
-    const limite = new Date();
-    limite.setDate(limite.getDate() + dias);
-    const limiteStr = limite.toISOString().slice(0, 10);
-    return contratosDetalhados.filter((c) => c.saldo > 0 && c.proximoVencimento && c.proximoVencimento >= hoje && c.proximoVencimento <= limiteStr).reduce((s, c) => s + c.saldo, 0);
-  };
-  return {
-    totalContratado,
-    totalRecebido,
-    totalRecebidoConciliado: pagamentos.filter((p) => p.contratoId && contratos.some((c) => c.id === p.contratoId)).reduce((s, p) => s + numero(p.valor), 0),
-    aReceber: contratosDetalhados.reduce((s, c) => s + c.saldo, 0),
-    vencido: contratosDetalhados.filter((c) => c.vencido).reduce((s, c) => s + c.saldo, 0),
-    projecao30: projetar(30), projecao60: projetar(60), projecao90: projetar(90),
-    contratos: contratosDetalhados,
-    pagamentosSemContrato: pagamentos.filter((p) => !p.contratoId),
-  };
 }
 
 app.get('/api/controladoria', async (req, res) => {

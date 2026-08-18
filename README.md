@@ -9,7 +9,7 @@ Sistema de gestão para o escritório: Dashboard, Quadro Kanban, Processos, Cale
 - Controladoria por exceção: prazos, publicações, cadastros, documentos e financeiro.
 - Tarefas com responsável, prazo fatal/interno, evidência de conclusão e revisão.
 - Central de publicações para TJMG, TRT-3, TRF-6 e DJEN/CNJ, com conciliação pelo número CNJ.
-- Financeiro com contratos, recebimentos, vencidos e projeções de 30, 60 e 90 dias.
+- Financeiro com condição parcelada da cliente separada do repasse líquido da operadora, tarifas do cartão, honorários de êxito condicionais e projeções reais de caixa.
 - Funil de leads com receptor oficial da Meta, criação automática sem duplicidade, contador de não lidas, histórico e atalho para responder no WhatsApp.
 - Rotina documental preservada, incluindo os 42 checklists por tipo de caso e link de envio ao cliente.
 - Dados e documentos persistidos em PostgreSQL/Neon.
@@ -31,6 +31,21 @@ Variáveis secretas exigidas na Render:
 No painel Meta for Developers, configure a URL acima, informe o mesmo token de verificação e assine o campo `messages`. Nunca grave os valores secretos no GitHub.
 
 Sem `WHATSAPP_PHONE_NUMBER_ID` e `WHATSAPP_ACCESS_TOKEN`, o CRM mantém o recebimento ativo e deixa o compositor de respostas bloqueado. Depois que as duas variáveis forem cadastradas, respostas de texto ficam disponíveis no histórico do lead e os respectivos status de entrega são atualizados pelos webhooks da Meta.
+
+## Integração com a ZapSign e contratos assinados
+
+O financeiro permite vincular cada contrato ao arquivo permanente no Google Drive e ao identificador do documento na ZapSign. A cópia do Drive é a fonte documental permanente; URLs de arquivos assinados recebidas por webhook não são armazenadas, pois são temporárias.
+
+O endpoint de webhook é `https://crm-iara-felicio-advocacia.onrender.com/api/integracoes/zapsign/webhook`.
+
+Variáveis secretas exigidas na Render:
+
+- `ZAPSIGN_API_TOKEN`: token da API obtido no painel da ZapSign; permite ao CRM consultar o status de um documento sob demanda.
+- `ZAPSIGN_WEBHOOK_SECRET`: chave aleatória longa, usada para autenticar as notificações recebidas.
+
+No painel da ZapSign, cadastre o endpoint acima para os eventos de criação, assinatura, recusa, exclusão e expiração de documento. Adicione o cabeçalho personalizado `x-zapsign-secret` com o mesmo valor de `ZAPSIGN_WEBHOOK_SECRET`. O receptor é idempotente e responde HTTP 200 inclusive quando o evento não pertence a um contrato conhecido, evitando novas tentativas desnecessárias.
+
+Nunca grave os dois segredos no GitHub. O valor bruto registra o contrato; o fluxo de caixa considera o repasse líquido após as tarifas da operadora. Honorários de êxito permanecem condicionais e só devem virar recebível depois que a base de cálculo for conhecida.
 
 ## Integração com a pasta CLIENTES do Google Drive
 
