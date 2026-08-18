@@ -6,7 +6,7 @@ const TIPOS_DOC = ['Petição', 'Procuração', 'Contrato', 'Documento Pessoal',
 const ETAPAS_LEAD = ['Novo lead', 'Em contato', 'Qualificado', 'Reunião', 'Proposta', 'Contrato', 'Aguardando documentos', 'Cliente ativo', 'Follow-up', 'Perdido'];
 const STATUS_TAREFA = ['A fazer', 'Em execução', 'Aguardando revisão', 'Concluída'];
 
-let state = { clientes: [], processos: [], eventos: [], documentos: [], checklistTemplates: [], usuarios: [], leads: [], tarefas: [], publicacoes: [], contratos: [], pagamentos: [], controladoria: { resumo: {}, itens: [] }, financeiro: {}, whatsapp: {} };
+let state = { clientes: [], processos: [], eventos: [], documentos: [], checklistTemplates: [], usuarios: [], leads: [], tarefas: [], publicacoes: [], contratos: [], pagamentos: [], controladoria: { resumo: {}, itens: [] }, financeiro: {}, whatsapp: {}, zapsign: {} };
 let usuarioAtual = null;
 
 // ---------- API helpers ----------
@@ -42,12 +42,13 @@ async function carregarTudo() {
     api('/api/controladoria'),
     api('/api/financeiro'),
     api('/api/whatsapp/status'),
+    api('/api/integracoes/zapsign/status'),
   ];
   if (usuarioAtual && usuarioAtual.role === 'admin') chamadas.push(api('/api/usuarios'));
   const resultados = await Promise.all(chamadas);
-  const [clientes, processos, eventos, documentos, dashboard, checklistTemplates, leads, tarefas, publicacoes, contratos, pagamentos, controladoria, financeiro, whatsapp] = resultados;
-  const usuarios = usuarioAtual && usuarioAtual.role === 'admin' ? resultados[14] : [];
-  state = { clientes, processos, eventos, documentos, dashboard, checklistTemplates, leads, tarefas, publicacoes, contratos, pagamentos, controladoria, financeiro, whatsapp, usuarios: usuarios || [] };
+  const [clientes, processos, eventos, documentos, dashboard, checklistTemplates, leads, tarefas, publicacoes, contratos, pagamentos, controladoria, financeiro, whatsapp, zapsign] = resultados;
+  const usuarios = usuarioAtual && usuarioAtual.role === 'admin' ? resultados[15] : [];
+  state = { clientes, processos, eventos, documentos, dashboard, checklistTemplates, leads, tarefas, publicacoes, contratos, pagamentos, controladoria, financeiro, whatsapp, zapsign, usuarios: usuarios || [] };
   renderAll();
 }
 
@@ -526,15 +527,45 @@ function renderControladoria() {
 
 function renderFinanceiro() {
   const f = state.financeiro || {};
+  const z = state.zapsign || {};
   document.getElementById('fin-contratado').textContent = moeda(f.totalContratado);
+  document.getElementById('fin-taxas').textContent = moeda(f.totalTaxasCartao);
+  document.getElementById('fin-liquido').textContent = moeda(f.totalLiquidoPrevisto);
   document.getElementById('fin-recebido').textContent = moeda(f.totalRecebido);
   document.getElementById('fin-receber').textContent = moeda(f.aReceber);
   document.getElementById('fin-vencido').textContent = moeda(f.vencido);
   document.getElementById('fin-30').textContent = moeda(f.projecao30);
   document.getElementById('fin-60').textContent = moeda(f.projecao60);
   document.getElementById('fin-90').textContent = moeda(f.projecao90);
-  document.querySelector('#tabela-contratos tbody').innerHTML = (f.contratos || []).map((c) => `<tr><td>${nomeCliente(c.clienteId)}</td><td>${c.descricao}</td><td>${moeda(c.valorTotal)}</td><td>${moeda(c.recebido)}</td><td>${moeda(c.saldo)}</td><td>${dataBr(c.proximoVencimento)}</td><td><span class="badge ${c.vencido ? 'risco-critico' : 'risco-baixo'}">${c.vencido ? 'Vencido' : (c.saldo ? 'Em aberto' : 'Quitado')}</span></td></tr>`).join('') || '<tr><td colspan="7">Nenhum contrato cadastrado.</td></tr>';
+  const statusZap = document.getElementById('zapsign-status');
+  statusZap.className = `integration-status ${z.webhookConfigurado && z.apiConfigurada ? 'ativo' : 'pendente'}`;
+  statusZap.innerHTML = z.webhookConfigurado && z.apiConfigurada
+    ? `<strong>ZapSign conectada</strong><span>Assinaturas e mudanças de status são sincronizadas automaticamente.${z.ultimoWebhookEm ? ` Último evento: ${new Date(z.ultimoWebhookEm).toLocaleString('pt-BR')}.` : ''}</span>`
+    : `<strong>ZapSign preparada</strong><span>Os contratos já aceitam o documento assinado e o identificador da ZapSign. Falta ativar ${!z.apiConfigurada ? 'o token da API' : ''}${!z.apiConfigurada && !z.webhookConfigurado ? ' e ' : ''}${!z.webhookConfigurado ? 'o webhook seguro' : ''}.</span>`;
+  document.querySelector('#tabela-contratos tbody').innerHTML = (f.contratos || []).map((c) => {
+    const situacao = c.vencido ? 'Vencido' : (c.saldo ? 'Em aberto' : 'Quitado');
+    const assinatura = c.zapsignStatus || c.statusAssinatura || 'Não vinculada';
+    const links = [c.documentoDriveUrl ? `<a href="${c.documentoDriveUrl}" target="_blank" rel="noopener">Drive</a>` : '', c.zapsignToken ? '<span class="badge risco-baixo">ZapSign</span>' : ''].filter(Boolean).join(' ');
+    return `<tr><td>${nomeCliente(c.clienteId)}</td><td><strong>${c.descricao}</strong><div class="contract-links">${links}</div></td><td>${c.numeroParcelasCliente || 1}× ${moeda(c.valorParcelaCliente)}</td><td>${moeda(c.valorTotal)}${c.honorarioExitoPercentual ? `<br><small>+ ${c.honorarioExitoPercentual}% de êxito</small>` : ''}</td><td>${moeda(c.valorLiquidoPrevisto)}<br><small>tarifas: ${moeda(c.taxaCartaoValor)}</small></td><td>${dataBr(c.proximoVencimento)}<br><small>${moeda(c.proximaParcelaValor)}</small><br><span class="badge ${c.vencido ? 'risco-critico' : 'risco-baixo'}">${situacao}</span></td><td>${assinatura}</td><td><button class="btn-secondary btn-small" onclick="verContrato(${c.id})">Detalhes</button></td></tr>`;
+  }).join('') || '<tr><td colspan="8">Nenhum contrato cadastrado.</td></tr>';
   document.querySelector('#tabela-pagamentos-soltos tbody').innerHTML = (f.pagamentosSemContrato || []).map((p) => `<tr><td>${dataBr(p.data)}</td><td>${p.descricao || 'Recebimento'}</td><td>${moeda(p.valor)}</td></tr>`).join('') || '<tr><td colspan="3">Nenhum recebimento sem contrato.</td></tr>';
+}
+
+function verContrato(id) {
+  const c = (state.financeiro.contratos || []).find((item) => item.id === id);
+  if (!c) return;
+  const repasses = (c.repasses || []).map((p) => `<div class="installment-row"><strong>${p.numero}º</strong><span>${dataBr(p.vencimento)}</span><span>${moeda(p.valor)}${p.valorPago ? ` · recebido ${moeda(p.valorPago)}` : ''}</span><span class="badge ${p.situacao === 'Atrasado' ? 'risco-critico' : 'risco-baixo'}">${p.situacao}</span></div>`).join('');
+  const links = c.documentoDriveUrl ? `<a class="btn-secondary" href="${c.documentoDriveUrl}" target="_blank" rel="noopener">Abrir contrato assinado no Drive</a>` : '';
+  modalBox.classList.add('modal-wide');
+  modalBox.innerHTML = `<h3>${c.descricao}</h3><p><strong>${nomeCliente(c.clienteId)}</strong></p><div class="notice"><strong>Cliente:</strong> ${c.numeroParcelasCliente || 1}× ${moeda(c.valorParcelaCliente)} no ${c.formaPagamento || 'meio informado'}.<br><strong>Escritório:</strong> repasse líquido previsto de ${moeda(c.valorLiquidoPrevisto)}, após ${moeda(c.taxaCartaoValor)} de tarifas.</div>${c.honorarioExitoPercentual ? `<div class="notice">Honorários de êxito: ${c.honorarioExitoPercentual}% sobre ${c.honorarioExitoBase || 'a base definida no contrato'}. Este valor é condicional e não foi somado ao saldo fixo.</div>` : ''}<p><strong>Assinatura ZapSign:</strong> ${c.zapsignStatus || c.statusAssinatura || 'Não vinculada'}</p><h4>Repasse(s) da operadora</h4><div class="installment-list">${repasses}</div><div class="modal-actions">${links}${state.zapsign.apiConfigurada && c.zapsignToken ? `<button class="btn-secondary" onclick="sincronizarZapSign(${c.id})">Atualizar ZapSign</button>` : ''}${c.saldo ? `<button class="btn-primary" onclick="abrirModalPagamento(${c.id}, ${c.proximaParcelaValor || 0})">Registrar repasse recebido</button>` : ''}<button class="btn-secondary" onclick="fecharModal()">Fechar</button></div>`;
+  overlay.classList.add('active');
+}
+
+async function sincronizarZapSign(id) {
+  try {
+    await api(`/api/integracoes/zapsign/contratos/${id}/sincronizar`, { method: 'POST' });
+    fecharModal(); await carregarTudo();
+  } catch (e) { alert(e.message); }
 }
 
 let charts = {};
@@ -621,19 +652,31 @@ async function criarTarefaPublicacao(id) {
 }
 
 function abrirModalContrato() {
-  modalBox.innerHTML = `<h3>Novo contrato de honorários</h3><label>Cliente</label><select id="f-cliente"><option value="">— selecione —</option>${opcoesClientes()}</select><label>Processo (opcional)</label><select id="f-processo">${opcoesProcessos()}</select><label>Descrição</label><input id="f-descricao" placeholder="Ex.: Honorários ação previdenciária"><label>Valor total</label><input id="f-valor" type="number" min="0" step="0.01"><label>Próximo vencimento</label><input id="f-vencimento" type="date"><label>Status</label><select id="f-status"><option>Ativo</option><option>Quitado</option><option>Cancelado</option></select><div class="modal-actions"><button class="btn-secondary" onclick="fecharModal()">Cancelar</button><button class="btn-primary" onclick="salvarContrato()">Salvar</button></div>`;
+  modalBox.classList.add('modal-wide');
+  modalBox.innerHTML = `<h3>Novo contrato de honorários</h3><label>Cliente</label><select id="f-cliente"><option value="">— selecione —</option>${opcoesClientes()}</select><label>Processo (opcional)</label><select id="f-processo">${opcoesProcessos()}</select><label>Descrição</label><input id="f-descricao" placeholder="Ex.: Honorários ação previdenciária"><label>Tipo de honorário</label><select id="f-tipo-honorario"><option>Fixo</option><option>Êxito</option><option selected>Misto</option></select><h4>Condição oferecida à cliente</h4><label>Valor bruto contratado</label><input id="f-valor" type="number" min="0" step="0.01" oninput="recalcularContratoCartao()"><label>Parcelas da cliente</label><input id="f-parcelas-cliente" type="number" min="1" step="1" value="1" oninput="recalcularContratoCartao()"><label>Valor de cada parcela</label><input id="f-valor-parcela-cliente" type="number" min="0" step="0.01"><label>Forma de pagamento</label><select id="f-forma-pagamento"><option>Cartão de crédito</option><option>PIX</option><option>Boleto</option><option>Transferência</option><option>Dinheiro</option><option>Outro</option></select><h4>Repasse ao escritório</h4><div class="notice">Informe o valor líquido e a data mostrados no extrato da operadora. O parcelamento da cliente não será tratado como recebimento mensal do escritório.</div><label>Tarifas descontadas pela operadora</label><input id="f-taxa-cartao" type="number" min="0" step="0.01" oninput="recalcularContratoCartao('taxa')"><label>Valor líquido previsto em 1 repasse</label><input id="f-liquido-previsto" type="number" min="0" step="0.01" oninput="recalcularContratoCartao('liquido')"><label>Data prevista do repasse</label><input id="f-data-repasse" type="date"><label>Data do contrato</label><input id="f-data-contrato" type="date"><label>Honorários de êxito (%)</label><input id="f-exito" type="number" min="0" max="100" step="0.01"><label>Base dos honorários de êxito</label><input id="f-base-exito" placeholder="Ex.: valor da causa e eventual multa"><label>Link permanente do contrato assinado no Drive</label><input id="f-drive-url" type="url" placeholder="https://drive.google.com/..."><label>Identificador do documento na ZapSign</label><input id="f-zapsign-token" placeholder="Token/UUID do documento"><label>Status da assinatura</label><select id="f-zapsign-status"><option>Aguardando assinatura</option><option>Assinado</option><option>Recusado</option><option>Expirado</option></select><label>Status financeiro</label><select id="f-status"><option>Ativo</option><option>Quitado</option><option>Cancelado</option></select><div class="modal-actions"><button class="btn-secondary" onclick="fecharModal()">Cancelar</button><button class="btn-primary" onclick="salvarContrato()">Salvar contrato</button></div>`;
   overlay.classList.add('active');
+}
+function recalcularContratoCartao(origem = 'total') {
+  const total = Number(document.getElementById('f-valor').value) || 0;
+  const quantidade = Number(document.getElementById('f-parcelas-cliente').value) || 1;
+  const taxa = Number(document.getElementById('f-taxa-cartao').value) || 0;
+  const liquido = Number(document.getElementById('f-liquido-previsto').value) || 0;
+  document.getElementById('f-valor-parcela-cliente').value = (total / quantidade).toFixed(2);
+  if (origem === 'liquido') document.getElementById('f-taxa-cartao').value = Math.max(0, total - liquido).toFixed(2);
+  else document.getElementById('f-liquido-previsto').value = Math.max(0, total - taxa).toFixed(2);
 }
 async function salvarContrato() {
   try {
-    await api('/api/contratos', { method:'POST', body:JSON.stringify({ clienteId:Number(document.getElementById('f-cliente').value)||null, processoId:Number(document.getElementById('f-processo').value)||null, descricao:document.getElementById('f-descricao').value, valorTotal:Number(document.getElementById('f-valor').value), proximoVencimento:document.getElementById('f-vencimento').value||null, status:document.getElementById('f-status').value }) });
+    await api('/api/contratos', { method:'POST', body:JSON.stringify({ clienteId:Number(document.getElementById('f-cliente').value)||null, processoId:Number(document.getElementById('f-processo').value)||null, descricao:document.getElementById('f-descricao').value, tipoHonorario:document.getElementById('f-tipo-honorario').value, valorTotal:Number(document.getElementById('f-valor').value), numeroParcelasCliente:Number(document.getElementById('f-parcelas-cliente').value)||1, valorParcelaCliente:Number(document.getElementById('f-valor-parcela-cliente').value)||0, formaPagamento:document.getElementById('f-forma-pagamento').value, numeroRepasses:1, taxaCartaoValor:Number(document.getElementById('f-taxa-cartao').value)||0, valorLiquidoPrevisto:Number(document.getElementById('f-liquido-previsto').value)||0, dataPrimeiroRepasse:document.getElementById('f-data-repasse').value||null, dataContrato:document.getElementById('f-data-contrato').value||null, honorarioExitoPercentual:Number(document.getElementById('f-exito').value)||0, honorarioExitoBase:document.getElementById('f-base-exito').value, documentoDriveUrl:document.getElementById('f-drive-url').value||null, zapsignToken:document.getElementById('f-zapsign-token').value||null, zapsignStatus:document.getElementById('f-zapsign-status').value, status:document.getElementById('f-status').value }) });
     fecharModal(); await carregarTudo();
   } catch (e) { alert(e.message); }
 }
-function abrirModalPagamento() {
+function abrirModalPagamento(contratoId = null, valorSugerido = null) {
+  fecharModal();
   const opcoes = state.contratos.map((c) => `<option value="${c.id}">${c.descricao} · ${nomeCliente(c.clienteId)}</option>`).join('');
-  modalBox.innerHTML = `<h3>Registrar recebimento</h3><label>Contrato (deixe vazio se ainda não conciliado)</label><select id="f-contrato"><option value="">— não conciliado —</option>${opcoes}</select><label>Data</label><input id="f-data" type="date"><label>Valor</label><input id="f-valor" type="number" min="0" step="0.01"><label>Descrição / comprovante</label><input id="f-descricao" placeholder="Ex.: PIX identificado no extrato"><div class="modal-actions"><button class="btn-secondary" onclick="fecharModal()">Cancelar</button><button class="btn-primary" onclick="salvarPagamento()">Salvar</button></div>`;
+  modalBox.innerHTML = `<h3>Registrar recebimento</h3><label>Contrato (deixe vazio se ainda não conciliado)</label><select id="f-contrato"><option value="">— não conciliado —</option>${opcoes}</select><label>Data</label><input id="f-data" type="date" value="${new Date().toISOString().slice(0, 10)}"><label>Valor líquido recebido</label><input id="f-valor" type="number" min="0" step="0.01" value="${valorSugerido || ''}"><label>Descrição / comprovante</label><input id="f-descricao" placeholder="Ex.: Repasse líquido da operadora do cartão"><div class="modal-actions"><button class="btn-secondary" onclick="fecharModal()">Cancelar</button><button class="btn-primary" onclick="salvarPagamento()">Salvar</button></div>`;
   overlay.classList.add('active');
+  if (contratoId) document.getElementById('f-contrato').value = String(contratoId);
 }
 async function salvarPagamento() {
   try {
@@ -655,6 +698,7 @@ const modalBox = document.getElementById('modal-box');
 
 function fecharModal() {
   overlay.classList.remove('active');
+  modalBox.classList.remove('modal-wide');
   modalBox.innerHTML = '';
 }
 overlay.addEventListener('click', (e) => { if (e.target === overlay) fecharModal(); });
