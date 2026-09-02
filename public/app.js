@@ -3,8 +3,7 @@ const AREAS = ['Cível', 'Trabalhista', 'Família', 'Criminal', 'Tributário', '
 const TIPOS_PROCESSO = ['Ação Ordinária', 'CPD', 'Mandado de Segurança', 'Execução', 'Outro'];
 const TIPOS_EVENTO = ['Audiência', 'Prazo', 'Reunião', 'Perícia', 'Outro'];
 const TIPOS_DOC = ['Petição', 'Procuração', 'Contrato', 'Documento Pessoal', 'Prova', 'Outro'];
-const ETAPAS_LEAD = ['Novo lead', 'Em contato', 'Qualificado', 'Reunião', 'Proposta', 'Contrato', 'Aguardando documentos', 'Cliente ativo', 'Follow-up', 'Perdido'];
-const STATUS_TAREFA = ['A fazer', 'Em execução', 'Aguardando revisão', 'Concluída'];
+const ETAPAS_LEAD = ['1. Prospecção', '2. Qualificação', '3. Reunião Agendada', '4. Proposta Enviada', '5. Negociação', '6. Contrato', '7. Pós-venda'];const STATUS_TAREFA = ['A fazer', 'Em execução', 'Aguardando revisão', 'Concluída'];
 
 let state = { clientes: [], processos: [], eventos: [], documentos: [], checklistTemplates: [], usuarios: [], leads: [], tarefas: [], publicacoes: [], contratos: [], pagamentos: [], controladoria: { resumo: {}, itens: [] }, financeiro: {}, whatsapp: {}, zapsign: {} };
 let usuarioAtual = null;
@@ -617,7 +616,7 @@ function renderUsuarios() {
 }
 
 function abrirModalLead() {
-  modalBox.innerHTML = `<h3>Novo Lead</h3><label>Nome</label><input id="f-nome"><label>Telefone / WhatsApp</label><input id="f-telefone"><label>Origem</label><input id="f-origem" placeholder="Ex.: indicação, Instagram"><label>Etapa</label><select id="f-etapa">${opcoesLista(ETAPAS_LEAD, 'Novo lead')}</select><div class="modal-actions"><button class="btn-secondary" onclick="fecharModal()">Cancelar</button><button class="btn-primary" onclick="salvarLead()">Salvar</button></div>`;
+  modalBox.innerHTML = `<h3>Novo Lead</h3><label>Nome</label><input id="f-nome"><label>Telefone / WhatsApp</label><input id="f-telefone"><label>Origem</label><input id="f-origem" placeholder="Ex.: indicação, Instagram"><label>Etapa</label><select id="f-etapa">${opcoesLista(ETAPAS_LEAD, '1. Prospecção')}</select><div class="modal-actions"><button class="btn-secondary" onclick="fecharModal()">Cancelar</button><button class="btn-primary" onclick="salvarLead()">Salvar</button></div>`;
   overlay.classList.add('active');
 }
 async function salvarLead() {
