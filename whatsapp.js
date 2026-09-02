@@ -77,7 +77,7 @@ function aplicarWebhookWhatsApp(db, payload, agora = new Date().toISOString()) {
             telefone,
             whatsappWaId: telefone,
             origem: 'WhatsApp Business (API oficial)',
-            etapa: 'Novo lead',
+            etapa: '1. Prospecção',
             criadoEm: agora,
             interacoes: [],
             naoLidas: 0,
