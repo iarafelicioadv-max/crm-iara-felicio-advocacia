@@ -67,6 +67,7 @@ function normalizarDadosProcuracao(dados = {}, cliente = {}) {
     dataAssinatura: texto(dados.dataAssinatura) || new Date().toISOString().slice(0, 10),
     email: texto(dados.email || cliente.email),
     telefone: texto(dados.telefone || cliente.telefone),
+    outorgadoAdicional: texto(dados.outorgadoAdicional),
   };
 }
 
@@ -88,7 +89,7 @@ function blocosProcuracao(dados) {
     { tipo: 'paragrafo', texto: 'Pelo presente instrumento particular de mandato por mim abaixo assinado:' },
     { tipo: 'paragrafo', texto: `OUTORGANTE: ${dados.nome}, ${dados.nacionalidade}, ${dados.estadoCivil}, ${dados.profissao}, portadora da Carteira de Identidade nº ${dados.rg}, emitida pelo ${dados.orgaoEmissor}, CPF nº ${dados.cpf}, residente e domiciliada em ${dados.enderecoCompleto}.` },
     { tipo: 'paragrafo', texto: 'Constituo e nomeio os procuradores:' },
-    { tipo: 'paragrafo', texto: 'OUTORGADOS: IARA VASCONCELOS VIEIRA FELÍCIO, brasileira, casada, advogada inscrita na OAB/MG sob o nº 247.061, com escritório localizado na Rua João Pinheiro, 71, Centro, Caratinga/MG, CEP 35.300-067, e VICTOR AUGUSTO VIEIRA SOYER, brasileiro, solteiro, advogado inscrito na OAB/MG sob o nº 221.162, com escritório localizado na Rua Emídio Beruto, 74, 2º andar, sala 3, Cinquentenário, Belo Horizonte/MG, CEP 30.570-050.' },
+    { tipo: 'paragrafo', texto: 'OUTORGADOS: IARA VASCONCELOS VIEIRA FELÍCIO, brasileira, casada, advogada inscrita na OAB/MG sob o nº 247.061, com escritório localizado na Rua João Pinheiro, 71, Centro, Caratinga/MG, CEP 35.300-067' + (dados.outorgadoAdicional ? `, e ${dados.outorgadoAdicional}.` : '.') },
     { tipo: 'paragrafo', texto: 'OBJETO: Representar a Outorgante, promovendo a defesa dos seus direitos e interesses, podendo, para tanto, propor quaisquer ações, medidas incidentais e acompanhar processos administrativos e/ou judiciais em qualquer Juízo, Instância, Tribunal ou Repartição Pública.' },
     { tipo: 'paragrafo', texto: 'PODERES: Por este instrumento particular de procuração, constituo meus bastantes procuradores os outorgados, concedendo-lhes os poderes inerentes à cláusula ad judicia et extra, para o foro em geral, podendo promover quaisquer medidas judiciais ou administrativas, assinar termos, oferecer defesa direta ou indireta, interpor recursos, ajuizar ações e conduzir os respectivos processos, solicitar, providenciar e ter acesso a documentos de qualquer natureza. O presente instrumento de mandato é oneroso e contratual, podendo os procuradores substabelecer a outrem, com ou sem reserva de poderes, dando tudo por bom e valioso, a fim de praticar os demais atos necessários ao fiel desempenho deste mandato.' },
     { tipo: 'paragrafo', texto: 'PODERES ESPECÍFICOS: A presente procuração outorga aos Advogados acima descritos poderes especiais para receber citação, confessar, reconhecer a procedência do pedido, transigir, desistir, renunciar ao direito sobre o qual se funda a ação, firmar compromissos ou acordos, receber valores, dar e receber quitação, levantar e receber RPV e ALVARÁS, requerer a gratuidade da justiça e assinar declaração de hipossuficiência econômica, em conformidade com o art. 105 da Lei nº 13.105/2015.' },
@@ -109,6 +110,7 @@ const LARGURA_PAGINA = 595.28; // A4
 const ALTURA_PAGINA = 841.89;
 const MARGEM = 56;
 const TOPO_CONTEUDO = 706;
+const ALTURA_RODAPE = 30;
 const RODAPE_LIMITE = 78;
 const CAMINHO_LOGO = path.join(__dirname, 'public', 'logo.png');
 
@@ -186,28 +188,29 @@ async function gerarPdfProcuracao(dados) {
       thickness: 1,
       color: COR_MARCA,
     });
-    novaPagina.drawLine({
-      start: { x: MARGEM, y: RODAPE_LIMITE - 18 },
-      end: { x: LARGURA_PAGINA - MARGEM, y: RODAPE_LIMITE - 18 },
-      thickness: 1,
+    novaPagina.drawRectangle({
+      x: 0,
+      y: 0,
+      width: LARGURA_PAGINA,
+      height: ALTURA_RODAPE,
       color: COR_MARCA,
     });
     const contato = '(33) 99931-7790  |  @iarafelicioadv';
     novaPagina.drawText(contato, {
       x: MARGEM,
-      y: RODAPE_LIMITE - 32,
+      y: ALTURA_RODAPE / 2 - 3,
       size: 8.5,
       font: fonte,
-      color: COR_TEXTO_SECUNDARIO,
+      color: rgb(1, 1, 1),
     });
     const assinaturaEscritorio = 'IARA V. VIEIRA FELÍCIO — OAB/MG 247.061';
     const larguraAssinaturaEscritorio = fonteNegrito.widthOfTextAtSize(assinaturaEscritorio, 8.5);
     novaPagina.drawText(assinaturaEscritorio, {
       x: LARGURA_PAGINA - MARGEM - larguraAssinaturaEscritorio,
-      y: RODAPE_LIMITE - 32,
+      y: ALTURA_RODAPE / 2 - 3,
       size: 8.5,
       font: fonteNegrito,
-      color: COR_MARCA,
+      color: rgb(1, 1, 1),
     });
   }
 

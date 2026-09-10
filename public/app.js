@@ -817,6 +817,7 @@ function abrirModalProcuracao(id) {
       <div><label>Telefone</label><input id="p-telefone" value="${textoSeguro(c.telefone || '')}"></div>
       <div><label>Local da assinatura</label><input id="p-local" value="${textoSeguro(c.cidade || 'Caratinga')}"></div>
       <div><label>Data da procuração</label><input id="p-data" type="date" value="${hoje}"></div>
+      <div class="form-span-2"><label>Advogado(a) adicional (opcional — só se o caso exigir mais de uma outorgada)</label><textarea id="p-outorgado-adicional" rows="2" placeholder="Ex.: MARIA DA SILVA, brasileira, solteira, advogada inscrita na OAB/MG sob o nº 000.000, com escritório situado na Rua X, 100, Centro, Cidade/UF, CEP 00.000-000"></textarea></div>
       <div class="form-span-2"><label>Processo vinculado (opcional)</label><select id="p-processo">${opcoesProcessos()}</select></div>
     </div>
     <div id="p-erro" class="erro-inline" style="display:none;"></div>
@@ -850,6 +851,7 @@ async function gerarProcuracao(clienteId) {
         localAssinatura: document.getElementById('p-local').value,
         dataAssinatura: document.getElementById('p-data').value,
         processoId: Number(document.getElementById('p-processo').value) || null,
+        outorgadoAdicional: document.getElementById('p-outorgado-adicional').value,
         enviarZapSign: false,
       }),
     });
