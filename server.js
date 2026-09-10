@@ -586,7 +586,7 @@ app.post('/api/clientes/:id/procuracao', async (req, res) => {
   const dados = normalizarDadosProcuracao(req.body, cliente);
   const faltantes = validarDadosProcuracao(dados);
   if (faltantes.length) return res.status(400).json({ erro: `preencha: ${faltantes.join(', ')}`, campos: faltantes });
-  const pdf = gerarPdfProcuracao(dados);
+  const pdf = await gerarPdfProcuracao(dados);
   const nomeOriginal = `PROCURAÇÃO - ${dados.nome}.pdf`;
   const arquivoId = await salvarArquivo(pdf, nomeOriginal, 'application/pdf');
   const documento = {

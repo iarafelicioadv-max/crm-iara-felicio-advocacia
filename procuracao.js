@@ -98,118 +98,172 @@ function blocosProcuracao(dados) {
   ];
 }
 
-function limparPdfTexto(valor) {
-  return texto(valor)
-    .replace(/[–—]/g, '-')
-    .replace(/[“”]/g, '"')
-    .replace(/[‘’]/g, "'")
-    .replace(/[^\x20-\x7E\xA0-\xFF]/g, '');
-}
 
-function larguraAproximada(valor, tamanho) {
-  return [...limparPdfTexto(valor)].reduce((total, caractere) => {
-    if ('MWÁÉÍÓÚÃÕÇ'.includes(caractere)) return total + tamanho * 0.78;
-    if ('ilI1.,:;!'.includes(caractere)) return total + tamanho * 0.28;
-    if (caractere === ' ') return total + tamanho * 0.28;
-    return total + tamanho * 0.52;
-  }, 0);
-}
+const fs = require('fs');
+const path = require('path');
+const { PDFDocument, StandardFonts, rgb } = require('pdf-lib');
 
-function quebrarLinhas(valor, largura, tamanho) {
-  const palavras = limparPdfTexto(valor).split(' ');
+const COR_MARCA = rgb(83 / 255, 70 / 255, 57 / 255); // marrom da logo IVF
+const COR_TEXTO_SECUNDARIO = rgb(0.4, 0.4, 0.4);
+const LARGURA_PAGINA = 595.28; // A4
+const ALTURA_PAGINA = 841.89;
+const MARGEM = 56;
+const TOPO_CONTEUDO = 706;
+const RODAPE_LIMITE = 78;
+const CAMINHO_LOGO = path.join(__dirname, 'public', 'logo.png');
+
+function quebrarLinhasComFonte(valorBruto, fonte, tamanho, larguraMaxima) {
+  const valor = limparPdfTexto(valorBruto);
+  const palavras = valor.split(' ');
   const linhas = [];
   let atual = '';
   for (const palavra of palavras) {
     const tentativa = atual ? `${atual} ${palavra}` : palavra;
-    if (atual && larguraAproximada(tentativa, tamanho) > largura) {
+    if (atual && fonte.widthOfTextAtSize(tentativa, tamanho) > larguraMaxima) {
       linhas.push(atual);
       atual = palavra;
-    } else atual = tentativa;
+    } else {
+      atual = tentativa;
+    }
   }
   if (atual) linhas.push(atual);
   return linhas;
 }
 
-function escaparPdf(valor) {
-  return limparPdfTexto(valor).replace(/\\/g, '\\\\').replace(/\(/g, '\\(').replace(/\)/g, '\\)');
+function limparPdfTexto(valor) {
+  return texto(valor)
+    .replace(/[–—]/g, '-')
+    .replace(/[""]/g, '"')
+    .replace(/['']/g, "'");
 }
 
-function objetosPdf(paginas) {
-  const objetos = [];
-  objetos[1] = Buffer.from('<< /Type /Catalog /Pages 2 0 R >>', 'ascii');
-  const idsPaginas = paginas.map((_, indice) => 5 + indice * 2);
-  objetos[2] = Buffer.from(`<< /Type /Pages /Kids [${idsPaginas.map((id) => `${id} 0 R`).join(' ')}] /Count ${idsPaginas.length} >>`, 'ascii');
-  objetos[3] = Buffer.from('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>', 'ascii');
-  objetos[4] = Buffer.from('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>', 'ascii');
-  paginas.forEach((comandos, indice) => {
-    const paginaId = idsPaginas[indice];
-    const conteudoId = paginaId + 1;
-    objetos[paginaId] = Buffer.from(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595.28 841.89] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents ${conteudoId} 0 R >>`, 'ascii');
-    const stream = Buffer.from(comandos.join('\n'), 'latin1');
-    objetos[conteudoId] = Buffer.concat([Buffer.from(`<< /Length ${stream.length} >>\nstream\n`, 'ascii'), stream, Buffer.from('\nendstream', 'ascii')]);
-  });
-  return objetos;
-}
+async function gerarPdfProcuracao(dados) {
+  const pdf = await PDFDocument.create();
+  pdf.setTitle(`Procuração - ${dados.nome}`);
+  pdf.setAuthor('IVF Advocacia e Consultoria Jurídica');
 
-function montarBufferPdf(objetos) {
-  const partes = [Buffer.from('%PDF-1.4\n%\xE2\xE3\xCF\xD3\n', 'binary')];
-  const offsets = [0];
-  let posicao = partes[0].length;
-  for (let id = 1; id < objetos.length; id += 1) {
-    const cabecalho = Buffer.from(`${id} 0 obj\n`, 'ascii');
-    const rodape = Buffer.from('\nendobj\n', 'ascii');
-    offsets[id] = posicao;
-    partes.push(cabecalho, objetos[id], rodape);
-    posicao += cabecalho.length + objetos[id].length + rodape.length;
+  const fonte = await pdf.embedFont(StandardFonts.Helvetica);
+  const fonteNegrito = await pdf.embedFont(StandardFonts.HelveticaBold);
+  const logoBytes = fs.readFileSync(CAMINHO_LOGO);
+  const logo = await pdf.embedPng(logoBytes);
+  const logoAltura = 34;
+  const logoLargura = (logo.width / logo.height) * logoAltura;
+
+  const paginas = [];
+  let pagina = null;
+  let y = 0;
+
+  function desenharTimbrado(novaPagina) {
+    novaPagina.drawImage(logo, {
+      x: MARGEM,
+      y: ALTURA_PAGINA - 30 - logoAltura,
+      width: logoLargura,
+      height: logoAltura,
+    });
+    const tituloEscritorio = 'IVF ADVOCACIA E CONSULTORIA JURÍDICA';
+    const tamanhoTitulo = 10;
+    const larguraTitulo = fonteNegrito.widthOfTextAtSize(tituloEscritorio, tamanhoTitulo);
+    novaPagina.drawText(tituloEscritorio, {
+      x: LARGURA_PAGINA - MARGEM - larguraTitulo,
+      y: ALTURA_PAGINA - 40,
+      size: tamanhoTitulo,
+      font: fonteNegrito,
+      color: COR_MARCA,
+    });
+    const email = 'iarafelicio.adv@gmail.com';
+    const tamanhoEmail = 9;
+    const larguraEmail = fonte.widthOfTextAtSize(email, tamanhoEmail);
+    novaPagina.drawText(email, {
+      x: LARGURA_PAGINA - MARGEM - larguraEmail,
+      y: ALTURA_PAGINA - 53,
+      size: tamanhoEmail,
+      font: fonte,
+      color: COR_TEXTO_SECUNDARIO,
+    });
+    novaPagina.drawLine({
+      start: { x: MARGEM, y: ALTURA_PAGINA - 70 },
+      end: { x: LARGURA_PAGINA - MARGEM, y: ALTURA_PAGINA - 70 },
+      thickness: 1,
+      color: COR_MARCA,
+    });
+    novaPagina.drawLine({
+      start: { x: MARGEM, y: RODAPE_LIMITE - 18 },
+      end: { x: LARGURA_PAGINA - MARGEM, y: RODAPE_LIMITE - 18 },
+      thickness: 1,
+      color: COR_MARCA,
+    });
+    const contato = '(33) 99931-7790  |  @iarafelicioadv';
+    novaPagina.drawText(contato, {
+      x: MARGEM,
+      y: RODAPE_LIMITE - 32,
+      size: 8.5,
+      font: fonte,
+      color: COR_TEXTO_SECUNDARIO,
+    });
+    const assinaturaEscritorio = 'IARA V. VIEIRA FELÍCIO — OAB/MG 247.061';
+    const larguraAssinaturaEscritorio = fonteNegrito.widthOfTextAtSize(assinaturaEscritorio, 8.5);
+    novaPagina.drawText(assinaturaEscritorio, {
+      x: LARGURA_PAGINA - MARGEM - larguraAssinaturaEscritorio,
+      y: RODAPE_LIMITE - 32,
+      size: 8.5,
+      font: fonteNegrito,
+      color: COR_MARCA,
+    });
   }
-  const xref = posicao;
-  let tabela = `xref\n0 ${objetos.length}\n0000000000 65535 f \n`;
-  for (let id = 1; id < objetos.length; id += 1) tabela += `${String(offsets[id]).padStart(10, '0')} 00000 n \n`;
-  tabela += `trailer\n<< /Size ${objetos.length} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;
-  partes.push(Buffer.from(tabela, 'ascii'));
-  return Buffer.concat(partes);
-}
 
-function gerarPdfProcuracao(dados) {
-  const larguraUtil = 467;
-  const paginas = [[]];
-  let pagina = 0;
-  let y = 782;
-  const novaPagina = () => { pagina += 1; paginas[pagina] = []; y = 782; };
-  const escrever = (linha, { fonte = 'F1', tamanho = 10.5, x = 64, entrelinha = 14 } = {}) => {
-    if (y < 65) novaPagina();
-    paginas[pagina].push(`BT /${fonte} ${tamanho} Tf 1 0 0 1 ${x.toFixed(2)} ${y.toFixed(2)} Tm (${escaparPdf(linha)}) Tj ET`);
+  function novaPagina() {
+    pagina = pdf.addPage([LARGURA_PAGINA, ALTURA_PAGINA]);
+    desenharTimbrado(pagina);
+    paginas.push(pagina);
+    y = TOPO_CONTEUDO;
+  }
+
+  function escrever(linhaTexto, { negrito = false, tamanho = 10.5, x = MARGEM, entrelinha = 14, cor = rgb(0, 0, 0) } = {}) {
+    if (y < RODAPE_LIMITE) novaPagina();
+    pagina.drawText(limparPdfTexto(linhaTexto), {
+      x,
+      y,
+      size: tamanho,
+      font: negrito ? fonteNegrito : fonte,
+      color: cor,
+    });
     y -= entrelinha;
-  };
+  }
+
+  novaPagina();
+  const larguraUtil = LARGURA_PAGINA - MARGEM * 2;
 
   for (const bloco of blocosProcuracao(dados)) {
     if (bloco.tipo === 'titulo') {
-      const tamanho = 16;
-      const largura = larguraAproximada(bloco.texto, tamanho);
-      escrever(bloco.texto, { fonte: 'F2', tamanho, x: (595.28 - largura) / 2, entrelinha: 30 });
+      const tamanho = 15;
+      const largura = fonteNegrito.widthOfTextAtSize(bloco.texto, tamanho);
+      escrever(bloco.texto, { negrito: true, tamanho, x: (LARGURA_PAGINA - largura) / 2, entrelinha: 30, cor: COR_MARCA });
       continue;
     }
     if (bloco.tipo === 'data') {
       y -= 10;
-      escrever(bloco.texto, { x: Math.max(64, 531 - larguraAproximada(bloco.texto, 10.5)), entrelinha: 36 });
+      const largura = fonte.widthOfTextAtSize(bloco.texto, 10.5);
+      escrever(bloco.texto, { x: Math.max(MARGEM, LARGURA_PAGINA - MARGEM - largura), entrelinha: 36 });
       continue;
     }
     if (bloco.tipo === 'assinatura') {
       escrever('____________________________________________', { x: 160, entrelinha: 18 });
-      const largura = larguraAproximada(bloco.texto, 10.5);
-      escrever(bloco.texto, { fonte: 'F2', x: Math.max(64, (595.28 - largura) / 2), entrelinha: 16 });
+      const largura = fonteNegrito.widthOfTextAtSize(bloco.texto, 10.5);
+      escrever(bloco.texto, { negrito: true, x: Math.max(MARGEM, (LARGURA_PAGINA - largura) / 2), entrelinha: 16 });
       continue;
     }
     if (bloco.tipo === 'assinaturaCpf') {
-      const largura = larguraAproximada(bloco.texto, 10.5);
-      escrever(bloco.texto, { x: Math.max(64, (595.28 - largura) / 2), entrelinha: 14 });
+      const largura = fonte.widthOfTextAtSize(bloco.texto, 10.5);
+      escrever(bloco.texto, { x: Math.max(MARGEM, (LARGURA_PAGINA - largura) / 2), entrelinha: 14 });
       continue;
     }
-    const linhas = quebrarLinhas(bloco.texto, larguraUtil, 10.5);
+    const linhas = quebrarLinhasComFonte(bloco.texto, fonte, 10.5, larguraUtil);
     linhas.forEach((linha) => escrever(linha));
     y -= bloco.texto.startsWith('Constituo') ? 4 : 9;
   }
-  return montarBufferPdf(objetosPdf(paginas));
+
+  const bytes = await pdf.save();
+  return Buffer.from(bytes);
 }
 
 module.exports = {
