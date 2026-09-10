@@ -792,6 +792,12 @@ function crud(resource) {
 
   app.get(base, async (req, res) => {
     const db = await load();
+    if (resource === 'clientes') {
+      const ordenados = [...db.clientes].sort((a, b) =>
+        String(a.nome || '').localeCompare(String(b.nome || ''), 'pt-BR', { sensitivity: 'base' })
+      );
+      return res.json(ordenados);
+    }
     res.json(db[resource]);
   });
 
