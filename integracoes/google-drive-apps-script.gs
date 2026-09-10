@@ -164,34 +164,33 @@ function salvarDocumentoRotina(dados) {
   var bytes = Utilities.base64Decode(dados.conteudoBase64);
   var blobOriginal = Utilities.newBlob(bytes, dados.mimetype || 'application/octet-stream', dados.nomeOriginal || dados.nome || 'Documento');
 
-  var original = localizarDocumento(pastaOriginais, dados.documentoId);
-  if (!original) {
-    original = pastaOriginais.createFile(blobOriginal.copyBlob());
-    original.setName(dados.nomeOriginal || dados.nome || 'Documento');
-    original.setDescription(descricao);
-  }
+  // Se já existir um arquivo com o mesmo CRM_DOCUMENTO_ID, ele é movido para a lixeira
+  // e substituído por um novo — assim, ao regerar um documento (ex.: procuração),
+  // o conteúdo antigo nunca fica "preso" no Drive.
+  var originalExistente = localizarDocumento(pastaOriginais, dados.documentoId);
+  if (originalExistente) originalExistente.setTrashed(true);
+  var original = pastaOriginais.createFile(blobOriginal.copyBlob());
+  original.setName(dados.nomeOriginal || dados.nome || 'Documento');
+  original.setDescription(descricao);
 
   if (dados.destino === 'CONTRATO_HONORARIOS') {
-    var contrato = localizarDocumento(pastaContrato, dados.documentoId);
-    var contratoStatus = 'Já existente';
-    if (!contrato) {
-      var contratoPdf = blobFinalEmPdf(blobOriginal.copyBlob(), 'CONTRATO DE HONORÁRIOS - ' + nomeSeguro(dados.nomeCliente));
-      contrato = pastaContrato.createFile(contratoPdf.blob);
-      contrato.setDescription(descricao);
-      contratoStatus = contratoPdf.status;
-    }
+    var contratoExistente = localizarDocumento(pastaContrato, dados.documentoId);
+    if (contratoExistente) contratoExistente.setTrashed(true);
+    var contratoPdf = blobFinalEmPdf(blobOriginal.copyBlob(), 'CONTRATO DE HONORÁRIOS - ' + nomeSeguro(dados.nomeCliente));
+    var contrato = pastaContrato.createFile(contratoPdf.blob);
+    contrato.setDescription(descricao);
+    var contratoStatus = contratoPdf.status;
+
     return { arquivo: contrato, original: original, conversaoStatus: contratoStatus, estrutura: estrutura };
   }
 
-  var final = localizarDocumento(pastaPeticao, dados.documentoId);
-  var conversaoStatus = 'Já existente';
-  if (!final) {
-    var nomeBase = nomeSeguro(dados.nome || 'DOCUMENTO') + ' - ' + nomeSeguro(dados.nomeCliente || pastaCliente.getName());
-    var convertido = blobFinalEmPdf(blobOriginal.copyBlob(), nomeBase);
-    final = pastaPeticao.createFile(convertido.blob);
-    final.setDescription(descricao);
-    conversaoStatus = convertido.status;
-  }
+  var finalExistente = localizarDocumento(pastaPeticao, dados.documentoId);
+  if (finalExistente) finalExistente.setTrashed(true);
+  var nomeBase = nomeSeguro(dados.nome || 'DOCUMENTO') + ' - ' + nomeSeguro(dados.nomeCliente || pastaCliente.getName());
+  var convertido = blobFinalEmPdf(blobOriginal.copyBlob(), nomeBase);
+  var final = pastaPeticao.createFile(convertido.blob);
+  final.setDescription(descricao);
+  var conversaoStatus = convertido.status;
   renumerarDocumentosPeticao(pastaPeticao, dados.nomeCliente || pastaCliente.getName());
   return { arquivo: final, original: original, conversaoStatus: conversaoStatus, estrutura: estrutura };
 }
