@@ -791,12 +791,10 @@ function abrirModalProcuracao(id) {
     modalBox.innerHTML = `
       <h3>Procuração de ${textoSeguro(c.nome)}</h3>
       <div class="notice">Já existe uma procuração ativa. Para evitar duas procurações ocupando a numeração documental, utilize o documento existente.</div>
-      <p><strong>Status:</strong> ${textoSeguro(ativa.zapsignStatus || ativa.statusAssinatura || 'Gerada')}</p>
-      ${ativa.zapsignErro ? `<p class="erro-inline">${textoSeguro(ativa.zapsignErro)}</p>` : ''}
+      <p><strong>Status:</strong> ${textoSeguro(ativa.statusAssinatura || 'Gerada')}</p>
       <div class="modal-actions">
         <a class="btn-secondary" href="${ativa.arquivo}" target="_blank" rel="noopener">Abrir PDF</a>
-        ${ativa.driveFileUrl ? `<a class="btn-secondary" href="${ativa.driveFileUrl}" target="_blank" rel="noopener">Abrir no Drive</a>` : ''}
-        ${ativa.zapsignSignUrl ? `<button class="btn-primary" onclick="copiarLinkAssinatura('${textoSeguro(ativa.zapsignSignUrl)}')">Copiar link de assinatura</button>` : `<button class="btn-primary" onclick="enviarProcuracaoZapSign(${ativa.id})">Enviar à ZapSign</button>`}
+        ${ativa.driveFileUrl ? `<button class="btn-primary" onclick="copiarLinkAssinatura('${textoSeguro(ativa.driveFileUrl)}')">Copiar link para assinatura</button>` : ''}
         <button class="btn-secondary" onclick="fecharModal()">Fechar</button>
       </div>`;
     overlay.classList.add('active');
@@ -805,7 +803,7 @@ function abrirModalProcuracao(id) {
   const hoje = new Date().toISOString().slice(0, 10);
   modalBox.innerHTML = `
     <h3>Gerar procuração</h3>
-    <div class="notice">Confira os dados da outorgante. Ao confirmar, o CRM gera o PDF, salva como <strong>02 - PROCURAÇÃO</strong> no Drive e o envia à ZapSign. Se houver e-mail, a ZapSign envia o convite automaticamente; o WhatsApp automático permanece desligado.</div>
+    <div class="notice">Confira os dados da outorgante. Ao confirmar, o CRM gera o PDF, salva como <strong>02 - PROCURAÇÃO</strong> no Drive e devolve o link para você encaminhar à cliente assinar manualmente (baixar, assinar e reenviar).</div>
     <div class="form-grid">
       <div class="form-span-2"><label>Nome completo</label><input id="p-nome" value="${textoSeguro(c.nome || '')}"></div>
       <div><label>CPF</label><input id="p-cpf" value="${textoSeguro(c.documento || '')}" placeholder="000.000.000-00"></div>
@@ -824,7 +822,7 @@ function abrirModalProcuracao(id) {
     <div id="p-erro" class="erro-inline" style="display:none;"></div>
     <div class="modal-actions">
       <button class="btn-secondary" onclick="fecharModal()">Cancelar</button>
-      <button class="btn-primary" id="p-enviar" onclick="gerarProcuracao(${c.id})">Gerar PDF e enviar à ZapSign</button>
+      <button class="btn-primary" id="p-enviar" onclick="gerarProcuracao(${c.id})">Gerar PDF e link para assinatura</button>
     </div>`;
   overlay.classList.add('active');
 }
@@ -852,7 +850,7 @@ async function gerarProcuracao(clienteId) {
         localAssinatura: document.getElementById('p-local').value,
         dataAssinatura: document.getElementById('p-data').value,
         processoId: Number(document.getElementById('p-processo').value) || null,
-        enviarZapSign: true,
+        enviarZapSign: false,
       }),
     });
     await carregarTudo();
@@ -863,19 +861,17 @@ async function gerarProcuracao(clienteId) {
       <div class="empty-success">O PDF foi criado e registrado na rotina documental.</div>
       ${resultado.aviso ? `<div class="notice" style="margin-top:14px;">${textoSeguro(resultado.aviso)}</div>` : ''}
       <p><strong>Drive:</strong> ${d.driveSyncStatus === 'Sincronizado' ? 'salva como 02 - PROCURAÇÃO' : textoSeguro(d.driveSyncStatus || 'pendente')}</p>
-      <p><strong>ZapSign:</strong> ${textoSeguro(d.zapsignStatus || 'aguardando envio')}</p>
-      ${z?.envioAutomaticoEmail ? '<p>O convite de assinatura foi enviado automaticamente ao e-mail informado.</p>' : (z?.signUrl ? '<p>Copie o link abaixo e encaminhe à cliente.</p>' : '')}
+      ${d.driveFileUrl ? '<p>Copie o link abaixo e encaminhe à cliente para baixar, assinar e reenviar.</p>' : '<p>A pasta ainda está sincronizando com o Drive — o link aparece em instantes.</p>'}
       <div class="modal-actions">
         <a class="btn-secondary" href="${d.arquivo}" target="_blank" rel="noopener">Abrir PDF</a>
-        ${d.driveFileUrl ? `<a class="btn-secondary" href="${d.driveFileUrl}" target="_blank" rel="noopener">Abrir no Drive</a>` : ''}
-        ${z?.signUrl ? `<button class="btn-primary" onclick="copiarLinkAssinatura('${textoSeguro(z.signUrl)}')">Copiar link de assinatura</button>` : `<button class="btn-primary" onclick="enviarProcuracaoZapSign(${d.id})">Tentar ZapSign novamente</button>`}
+        ${d.driveFileUrl ? `<button class="btn-primary" onclick="copiarLinkAssinatura('${textoSeguro(d.driveFileUrl)}')">Copiar link para assinatura</button>` : ''}
         <button class="btn-secondary" onclick="fecharModal()">Fechar</button>
       </div>`;
   } catch (e) {
     erro.textContent = e.message;
     erro.style.display = 'block';
     botao.disabled = false;
-    botao.textContent = 'Gerar PDF e enviar à ZapSign';
+    botao.textContent = 'Gerar PDF e link para assinatura';
   }
 }
 
