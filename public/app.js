@@ -567,7 +567,7 @@ function renderFinanceiro() {
   document.querySelector('#tabela-pagamentos-soltos tbody').innerHTML = (f.pagamentosSemContrato || []).map((p) => `<tr><td>${dataBr(p.data)}</td><td>${p.descricao || 'Recebimento'}</td><td>${moeda(p.valor)}</td><td><button class="btn-secondary btn-small" onclick="editarPagamento(${p.id})">Corrigir e vincular</button></td></tr>`).join('') || '<tr><td colspan="4">Nenhum recebimento sem contrato.</td></tr>';
   const extrato = f.extrato || [];
   document.getElementById('fin-extrato-total').textContent = extrato.length ? ` Total: ${moeda(extrato.reduce((s, p) => s + p.valor, 0))} em ${extrato.length} recebimento(s).` : '';
-  document.querySelector('#tabela-extrato-recebimentos tbody').innerHTML = extrato.map((p) => `<tr><td>${dataBr(p.data)}</td><td>${p.cliente}</td><td>${p.descricao}</td><td>${moeda(p.valor)}</td></tr>`).join('') || '<tr><td colspan="4">Nenhum recebimento registrado ainda.</td></tr>';
+  document.querySelector('#tabela-extrato-recebimentos tbody').innerHTML = extrato.map((p) => `<tr><td>${dataBr(p.data)}</td><td>${p.cliente}</td><td>${p.descricao}</td><td>${moeda(p.valor)}</td><td><button class="btn-secondary btn-small" onclick="editarPagamento(${p.id})">Editar</button> <button class="btn-secondary btn-small" onclick="excluir('pagamentos', ${p.id})">Excluir</button></td></tr>`).join('') || '<tr><td colspan="5">Nenhum recebimento registrado ainda.</td></tr>';
 }
 
 function verContrato(id) {
