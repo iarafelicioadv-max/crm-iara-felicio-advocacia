@@ -4,8 +4,9 @@ const TIPOS_PROCESSO = ['Ação Ordinária', 'CPD', 'Mandado de Segurança', 'Ex
 const TIPOS_EVENTO = ['Audiência', 'Prazo', 'Reunião', 'Perícia', 'Outro'];
 const TIPOS_DOC = ['Petição', 'Procuração', 'Contrato', 'Documento Pessoal', 'Prova', 'Outro'];
 const ETAPAS_LEAD = ['1. Prospecção', '2. Qualificação', '3. Reunião Agendada', '4. Proposta Enviada', '5. Negociação', '6. Contrato', '7. Pós-venda'];const STATUS_TAREFA = ['A fazer', 'Em execução', 'Aguardando revisão', 'Concluída'];
+const CATEGORIAS_DESPESA = ['Aluguel', 'Água/Luz/Internet', 'Softwares e assinaturas', 'Marketing e conteúdo', 'Salários e pró-labore', 'Contador e impostos', 'Material de escritório', 'Cartório e custas', 'Outro'];
 
-let state = { clientes: [], processos: [], eventos: [], documentos: [], checklistTemplates: [], usuarios: [], leads: [], tarefas: [], publicacoes: [], contratos: [], pagamentos: [], controladoria: { resumo: {}, itens: [] }, financeiro: {}, whatsapp: {}, zapsign: {} };
+let state = { clientes: [], processos: [], eventos: [], documentos: [], checklistTemplates: [], usuarios: [], leads: [], tarefas: [], publicacoes: [], contratos: [], pagamentos: [], despesas: [], controladoria: { resumo: {}, itens: [] }, financeiro: {}, whatsapp: {}, zapsign: {} };
 let usuarioAtual = null;
 
 // ---------- API helpers ----------
@@ -38,6 +39,7 @@ async function carregarTudo() {
     api('/api/publicacoes'),
     api('/api/contratos'),
     api('/api/pagamentos'),
+    api('/api/despesas'),
     api('/api/controladoria'),
     api('/api/financeiro'),
     api('/api/whatsapp/status'),
@@ -45,9 +47,9 @@ async function carregarTudo() {
   ];
   if (usuarioAtual && usuarioAtual.role === 'admin') chamadas.push(api('/api/usuarios'));
   const resultados = await Promise.all(chamadas);
-  const [clientes, processos, eventos, documentos, dashboard, checklistTemplates, leads, tarefas, publicacoes, contratos, pagamentos, controladoria, financeiro, whatsapp, zapsign] = resultados;
-  const usuarios = usuarioAtual && usuarioAtual.role === 'admin' ? resultados[15] : [];
-  state = { clientes, processos, eventos, documentos, dashboard, checklistTemplates, leads, tarefas, publicacoes, contratos, pagamentos, controladoria, financeiro, whatsapp, zapsign, usuarios: usuarios || [] };
+  const [clientes, processos, eventos, documentos, dashboard, checklistTemplates, leads, tarefas, publicacoes, contratos, pagamentos, despesas, controladoria, financeiro, whatsapp, zapsign] = resultados;
+  const usuarios = usuarioAtual && usuarioAtual.role === 'admin' ? resultados[16] : [];
+  state = { clientes, processos, eventos, documentos, dashboard, checklistTemplates, leads, tarefas, publicacoes, contratos, pagamentos, despesas, controladoria, financeiro, whatsapp, zapsign, usuarios: usuarios || [] };
   renderAll();
 }
 
@@ -568,6 +570,21 @@ function renderFinanceiro() {
   const extrato = f.extrato || [];
   document.getElementById('fin-extrato-total').textContent = extrato.length ? ` Total: ${moeda(extrato.reduce((s, p) => s + p.valor, 0))} em ${extrato.length} recebimento(s).` : '';
   document.querySelector('#tabela-extrato-recebimentos tbody').innerHTML = extrato.map((p) => `<tr><td>${dataBr(p.data)}</td><td>${p.cliente}</td><td>${p.descricao}</td><td>${moeda(p.valor)}</td><td><button class="btn-secondary btn-small" onclick="editarPagamento(${p.id})">Editar</button> <button class="btn-secondary btn-small" onclick="excluir('pagamentos', ${p.id})">Excluir</button></td></tr>`).join('') || '<tr><td colspan="5">Nenhum recebimento registrado ainda.</td></tr>';
+
+  document.getElementById('fin-despesas').textContent = moeda(f.totalDespesas);
+  document.getElementById('fin-saldo-geral').textContent = moeda(f.saldoGeral);
+
+  const mesBr = (mes) => {
+    const [ano, m] = String(mes || '').split('-');
+    const nomes = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+    return m ? `${nomes[Number(m) - 1] || m}/${ano}` : mes;
+  };
+  const resumoMensal = f.resumoMensal || [];
+  document.querySelector('#tabela-resumo-mensal tbody').innerHTML = resumoMensal.map((m) => `<tr><td>${mesBr(m.mes)}</td><td>${moeda(m.recebido)}</td><td>${moeda(m.gasto)}</td><td><span class="badge ${m.saldo >= 0 ? 'risco-baixo' : 'risco-critico'}">${moeda(m.saldo)}</span></td></tr>`).join('') || '<tr><td colspan="4">Sem dados suficientes ainda.</td></tr>';
+
+  const despesas = f.despesas || [];
+  document.getElementById('fin-despesas-total').textContent = despesas.length ? ` Total: ${moeda(despesas.reduce((s, d) => s + d.valor, 0))} em ${despesas.length} despesa(s).` : '';
+  document.querySelector('#tabela-despesas tbody').innerHTML = despesas.map((d) => `<tr><td>${dataBr(d.data)}</td><td>${d.categoria}</td><td>${d.descricao}</td><td><span class="badge ${d.fixo ? 'risco-medio' : 'risco-baixo'}">${d.fixo ? 'Fixo' : 'Avulso'}</span></td><td>${moeda(d.valor)}</td><td><button class="btn-secondary btn-small" onclick="editarDespesa(${d.id})">Editar</button> <button class="btn-secondary btn-small" onclick="excluir('despesas', ${d.id})">Excluir</button></td></tr>`).join('') || '<tr><td colspan="6">Nenhuma despesa registrada ainda.</td></tr>';
 }
 
 function verContrato(id) {
@@ -714,6 +731,32 @@ async function salvarEdicaoPagamento(id) {
 async function salvarPagamento() {
   try {
     await api('/api/pagamentos', { method:'POST', body:JSON.stringify({ contratoId:Number(document.getElementById('f-contrato').value)||null, data:document.getElementById('f-data').value, valor:Number(document.getElementById('f-valor').value), descricao:document.getElementById('f-descricao').value }) });
+    fecharModal(); await carregarTudo();
+  } catch (e) { alert(e.message); }
+}
+function opcoesCategoriaDespesa(selecionada) {
+  return CATEGORIAS_DESPESA.map((c) => `<option value="${c}" ${c === selecionada ? 'selected' : ''}>${c}</option>`).join('');
+}
+function abrirModalDespesa() {
+  fecharModal();
+  modalBox.innerHTML = `<h3>Registrar despesa</h3><label>Categoria</label><select id="f-categoria">${opcoesCategoriaDespesa()}</select><label>Descrição</label><input id="f-descricao" placeholder="Ex.: Aluguel da sala, assinatura do sistema..."><label>Valor</label><input id="f-valor" type="number" min="0" step="0.01"><label>Data</label><input id="f-data" type="date" value="${new Date().toISOString().slice(0, 10)}"><label class="check-line"><input id="f-fixo" type="checkbox"> É um gasto fixo (se repete todo mês, tipo aluguel ou assinatura)</label><div class="modal-actions"><button class="btn-secondary" onclick="fecharModal()">Cancelar</button><button class="btn-primary" onclick="salvarDespesa()">Salvar</button></div>`;
+  overlay.classList.add('active');
+}
+function editarDespesa(id) {
+  const despesa = state.despesas.find((d) => d.id === id);
+  if (!despesa) return;
+  modalBox.innerHTML = `<h3>Corrigir despesa</h3><label>Categoria</label><select id="f-categoria">${opcoesCategoriaDespesa(despesa.categoria)}</select><label>Descrição</label><input id="f-descricao" value="${textoSeguro(despesa.descricao || '')}"><label>Valor</label><input id="f-valor" type="number" min="0" step="0.01" value="${despesa.valor || ''}"><label>Data</label><input id="f-data" type="date" value="${despesa.data || ''}"><label class="check-line"><input id="f-fixo" type="checkbox" ${despesa.fixo ? 'checked' : ''}> É um gasto fixo (se repete todo mês, tipo aluguel ou assinatura)</label><div class="modal-actions"><button class="btn-secondary" onclick="fecharModal()">Cancelar</button><button class="btn-primary" onclick="salvarEdicaoDespesa(${id})">Salvar correção</button></div>`;
+  overlay.classList.add('active');
+}
+async function salvarEdicaoDespesa(id) {
+  try {
+    await api(`/api/despesas/${id}`, { method:'PUT', body:JSON.stringify({ categoria:document.getElementById('f-categoria').value, descricao:document.getElementById('f-descricao').value, valor:Number(document.getElementById('f-valor').value), data:document.getElementById('f-data').value, fixo:document.getElementById('f-fixo').checked }) });
+    fecharModal(); await carregarTudo();
+  } catch (e) { alert(e.message); }
+}
+async function salvarDespesa() {
+  try {
+    await api('/api/despesas', { method:'POST', body:JSON.stringify({ categoria:document.getElementById('f-categoria').value, descricao:document.getElementById('f-descricao').value, valor:Number(document.getElementById('f-valor').value), data:document.getElementById('f-data').value, fixo:document.getElementById('f-fixo').checked }) });
     fecharModal(); await carregarTudo();
   } catch (e) { alert(e.message); }
 }
