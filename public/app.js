@@ -565,6 +565,9 @@ function renderFinanceiro() {
     return `<tr><td>${nomeCliente(c.clienteId)}</td><td><strong>${c.descricao}</strong><div class="contract-links">${links}</div></td><td>${c.numeroParcelasCliente || 1}× ${moeda(c.valorParcelaCliente)}</td><td>${moeda(c.valorTotal)}${c.honorarioExitoPercentual ? `<br><small>+ ${c.honorarioExitoPercentual}% de êxito</small>` : ''}</td><td>${moeda(c.valorLiquidoPrevisto)}<br><small>tarifas: ${moeda(c.taxaCartaoValor)}</small></td><td>${dataBr(c.proximoVencimento)}<br><small>${moeda(c.proximaParcelaValor)}</small><br><span class="badge ${c.vencido ? 'risco-critico' : 'risco-baixo'}">${situacao}</span></td><td>${assinatura}</td><td><button class="btn-secondary btn-small" onclick="verContrato(${c.id})">Detalhes</button></td></tr>`;
   }).join('') || '<tr><td colspan="8">Nenhum contrato cadastrado.</td></tr>';
   document.querySelector('#tabela-pagamentos-soltos tbody').innerHTML = (f.pagamentosSemContrato || []).map((p) => `<tr><td>${dataBr(p.data)}</td><td>${p.descricao || 'Recebimento'}</td><td>${moeda(p.valor)}</td><td><button class="btn-secondary btn-small" onclick="editarPagamento(${p.id})">Corrigir e vincular</button></td></tr>`).join('') || '<tr><td colspan="4">Nenhum recebimento sem contrato.</td></tr>';
+  const extrato = f.extrato || [];
+  document.getElementById('fin-extrato-total').textContent = extrato.length ? ` Total: ${moeda(extrato.reduce((s, p) => s + p.valor, 0))} em ${extrato.length} recebimento(s).` : '';
+  document.querySelector('#tabela-extrato-recebimentos tbody').innerHTML = extrato.map((p) => `<tr><td>${dataBr(p.data)}</td><td>${p.cliente}</td><td>${p.descricao}</td><td>${moeda(p.valor)}</td></tr>`).join('') || '<tr><td colspan="4">Nenhum recebimento registrado ainda.</td></tr>';
 }
 
 function verContrato(id) {

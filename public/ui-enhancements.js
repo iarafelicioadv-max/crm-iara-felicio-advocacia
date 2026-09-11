@@ -9,6 +9,7 @@ const TABLE_SEARCHES = [
   ['tabela-tarefas', 'Pesquisar tarefas'],
   ['tabela-publicacoes', 'Pesquisar publicações'],
   ['tabela-contratos', 'Pesquisar contratos'],
+  ['tabela-extrato-recebimentos', 'Pesquisar recebimentos'],
 ];
 
 function normalizarBusca(valor) {
