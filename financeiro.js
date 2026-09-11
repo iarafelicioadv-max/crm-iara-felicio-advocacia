@@ -126,6 +126,39 @@ function montarExtrato(db) {
     .sort((a, b) => String(b.data || '').localeCompare(String(a.data || '')) || (b.id - a.id));
 }
 
+function montarDespesas(db) {
+  const despesas = db.despesas || [];
+  return [...despesas]
+    .map((d) => ({
+      id: d.id,
+      data: d.data || null,
+      categoria: d.categoria || 'Outro',
+      descricao: d.descricao || '',
+      valor: numero(d.valor),
+      fixo: !!d.fixo,
+    }))
+    .sort((a, b) => String(b.data || '').localeCompare(String(a.data || '')) || (b.id - a.id));
+}
+
+function montarResumoMensal(db) {
+  const pagamentos = db.pagamentos || [];
+  const despesas = db.despesas || [];
+  const mesDe = (dataISO) => (/^\d{4}-\d{2}/.test(String(dataISO || '')) ? String(dataISO).slice(0, 7) : null);
+  const meses = {};
+  const linha = (mes) => (meses[mes] = meses[mes] || { mes, recebido: 0, gasto: 0 });
+  pagamentos.forEach((p) => {
+    const mes = mesDe(p.data);
+    if (mes) linha(mes).recebido += numero(p.valor);
+  });
+  despesas.forEach((d) => {
+    const mes = mesDe(d.data);
+    if (mes) linha(mes).gasto += numero(d.valor);
+  });
+  return Object.values(meses)
+    .map((m) => ({ ...m, saldo: Number((m.recebido - m.gasto).toFixed(2)) }))
+    .sort((a, b) => b.mes.localeCompare(a.mes));
+}
+
 function calcularFinanceiro(db, hoje = new Date().toISOString().slice(0, 10)) {
   const contratos = db.contratos || [];
   const pagamentos = db.pagamentos || [];
@@ -158,7 +191,11 @@ function calcularFinanceiro(db, hoje = new Date().toISOString().slice(0, 10)) {
     contratos: contratosDetalhados,
     pagamentosSemContrato: pagamentos.filter((p) => !p.contratoId),
     extrato: montarExtrato(db),
+    despesas: montarDespesas(db),
+    totalDespesas: (db.despesas || []).reduce((s, d) => s + numero(d.valor), 0),
+    saldoGeral: Number((pagamentos.reduce((s, p) => s + numero(p.valor), 0) - (db.despesas || []).reduce((s, d) => s + numero(d.valor), 0)).toFixed(2)),
+    resumoMensal: montarResumoMensal(db),
   };
 }
 
-module.exports = { adicionarMes, normalizarContrato, detalharContrato, calcularFinanceiro, montarExtrato };
+module.exports = { adicionarMes, normalizarContrato, detalharContrato, calcularFinanceiro, montarExtrato, montarDespesas, montarResumoMensal };

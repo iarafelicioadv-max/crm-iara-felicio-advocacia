@@ -833,6 +833,7 @@ function crud(resource) {
     if (resource === 'tarefas' && !String(item.titulo || '').trim()) return res.status(400).json({ erro: 'título da tarefa é obrigatório' });
     if (resource === 'contratos' && (!item.clienteId || !String(item.descricao || '').trim() || Number(item.valorTotal) <= 0)) return res.status(400).json({ erro: 'cliente, descrição e valor do contrato são obrigatórios' });
     if (resource === 'pagamentos' && (!item.data || Number(item.valor) <= 0)) return res.status(400).json({ erro: 'data e valor do pagamento são obrigatórios' });
+    if (resource === 'despesas' && (!item.data || Number(item.valor) <= 0 || !String(item.categoria || '').trim())) return res.status(400).json({ erro: 'categoria, data e valor da despesa são obrigatórios' });
     if (resource === 'processos') item.numeroNormalizado = String(item.numeroProcesso || item.nome || '').replace(/\D/g, '');
     if (resource === 'contratos') item = normalizarContrato(item);
     db[resource].push(item);
@@ -869,7 +870,7 @@ function crud(resource) {
   });
 }
 
-['clientes', 'processos', 'eventos', 'leads', 'tarefas', 'contratos', 'pagamentos'].forEach(crud);
+['clientes', 'processos', 'eventos', 'leads', 'tarefas', 'contratos', 'pagamentos', 'despesas'].forEach(crud);
 
 app.post('/api/tarefas/:id/concluir', async (req, res) => {
   const db = await load();
