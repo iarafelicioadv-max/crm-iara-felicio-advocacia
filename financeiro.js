@@ -104,6 +104,28 @@ function detalharContrato(contrato, pagamentos, hoje) {
   };
 }
 
+function montarExtrato(db) {
+  const contratos = db.contratos || [];
+  const clientes = db.clientes || [];
+  const pagamentos = db.pagamentos || [];
+  const nomeCliente = (id) => (clientes.find((c) => c.id === id) || {}).nome || null;
+  return [...pagamentos]
+    .map((p) => {
+      const contrato = contratos.find((c) => c.id === p.contratoId) || null;
+      return {
+        id: p.id,
+        data: p.data || null,
+        valor: numero(p.valor),
+        descricao: p.descricao || (contrato ? contrato.descricao : 'Recebimento avulso'),
+        clienteId: contrato ? contrato.clienteId : null,
+        cliente: contrato ? (nomeCliente(contrato.clienteId) || 'Cliente não identificado') : 'Sem contrato vinculado',
+        contratoId: contrato ? contrato.id : null,
+        contratoDescricao: contrato ? contrato.descricao : null,
+      };
+    })
+    .sort((a, b) => String(b.data || '').localeCompare(String(a.data || '')) || (b.id - a.id));
+}
+
 function calcularFinanceiro(db, hoje = new Date().toISOString().slice(0, 10)) {
   const contratos = db.contratos || [];
   const pagamentos = db.pagamentos || [];
@@ -135,7 +157,8 @@ function calcularFinanceiro(db, hoje = new Date().toISOString().slice(0, 10)) {
     projecao90: projetar(90),
     contratos: contratosDetalhados,
     pagamentosSemContrato: pagamentos.filter((p) => !p.contratoId),
+    extrato: montarExtrato(db),
   };
 }
 
-module.exports = { adicionarMes, normalizarContrato, detalharContrato, calcularFinanceiro };
+module.exports = { adicionarMes, normalizarContrato, detalharContrato, calcularFinanceiro, montarExtrato };

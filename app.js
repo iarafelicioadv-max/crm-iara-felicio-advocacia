@@ -1,10 +1,11 @@
-const STATUSES = ['Novo', 'Em Andamento', 'Aguardando', 'Concluído'];
+const STATUSES = ['Triagem', 'Pré-contencioso', 'Em Andamento', 'Aguardando', 'Em recurso', 'Cumprimento', 'Arquivado', 'Sem êxito', 'Novo', 'Concluído'];
 const AREAS = ['Cível', 'Trabalhista', 'Família', 'Criminal', 'Tributário', 'Previdenciário', 'Outro'];
 const TIPOS_PROCESSO = ['Ação Ordinária', 'CPD', 'Mandado de Segurança', 'Execução', 'Outro'];
 const TIPOS_EVENTO = ['Audiência', 'Prazo', 'Reunião', 'Perícia', 'Outro'];
 const TIPOS_DOC = ['Petição', 'Procuração', 'Contrato', 'Documento Pessoal', 'Prova', 'Outro'];
+const ETAPAS_LEAD = ['1. Prospecção', '2. Qualificação', '3. Reunião Agendada', '4. Proposta Enviada', '5. Negociação', '6. Contrato', '7. Pós-venda'];const STATUS_TAREFA = ['A fazer', 'Em execução', 'Aguardando revisão', 'Concluída'];
 
-let state = { clientes: [], processos: [], eventos: [], documentos: [], usuarios: [] };
+let state = { clientes: [], processos: [], eventos: [], documentos: [], checklistTemplates: [], usuarios: [], leads: [], tarefas: [], publicacoes: [], contratos: [], pagamentos: [], controladoria: { resumo: {}, itens: [] }, financeiro: {}, whatsapp: {}, zapsign: {} };
 let usuarioAtual = null;
 
 // ---------- API helpers ----------
@@ -31,10 +32,22 @@ async function carregarTudo() {
     api('/api/eventos'),
     api('/api/documentos'),
     api('/api/dashboard'),
+    api('/api/checklist-templates'),
+    api('/api/leads'),
+    api('/api/tarefas'),
+    api('/api/publicacoes'),
+    api('/api/contratos'),
+    api('/api/pagamentos'),
+    api('/api/controladoria'),
+    api('/api/financeiro'),
+    api('/api/whatsapp/status'),
+    api('/api/integracoes/zapsign/status'),
   ];
   if (usuarioAtual && usuarioAtual.role === 'admin') chamadas.push(api('/api/usuarios'));
-  const [clientes, processos, eventos, documentos, dashboard, usuarios] = await Promise.all(chamadas);
-  state = { clientes, processos, eventos, documentos, dashboard, usuarios: usuarios || [] };
+  const resultados = await Promise.all(chamadas);
+  const [clientes, processos, eventos, documentos, dashboard, checklistTemplates, leads, tarefas, publicacoes, contratos, pagamentos, controladoria, financeiro, whatsapp, zapsign] = resultados;
+  const usuarios = usuarioAtual && usuarioAtual.role === 'admin' ? resultados[15] : [];
+  state = { clientes, processos, eventos, documentos, dashboard, checklistTemplates, leads, tarefas, publicacoes, contratos, pagamentos, controladoria, financeiro, whatsapp, zapsign, usuarios: usuarios || [] };
   renderAll();
 }
 
@@ -66,6 +79,14 @@ function nomeProcesso(id) {
 function classStatus(s) {
   return 'status-' + String(s).replace(/\s+/g, '-');
 }
+function moeda(valor) { return Number(valor || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }); }
+function dataBr(valor) { return valor ? new Date(valor + 'T00:00:00').toLocaleDateString('pt-BR') : '—'; }
+function riscoClasse(risco) { return `risco-${String(risco || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()}`; }
+function textoSeguro(valor) {
+  return String(valor == null ? '' : valor).replace(/[&<>"']/g, (caractere) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  })[caractere]);
+}
 
 // ---------- Navegação ----------
 document.querySelectorAll('.nav-item[data-view]').forEach((btn) => {
@@ -85,16 +106,22 @@ function renderAll() {
   renderEventos();
   renderClientes();
   renderDocumentos();
+  renderLeads();
+  renderTarefas();
+  renderPublicacoes();
+  renderControladoria();
+  renderFinanceiro();
   renderRelatorios();
+  renderRotina();
   if (usuarioAtual && usuarioAtual.role === 'admin') renderUsuarios();
 }
 
 function renderDashboard() {
   const d = state.dashboard;
   document.getElementById('stat-total').textContent = d.totalProcessos;
-  document.getElementById('stat-liminares').textContent = d.liminaresDeferidas;
-  document.getElementById('stat-cpds').textContent = d.cpdsAtivos;
-  document.getElementById('stat-pendentes').textContent = d.acoesPendentes;
+  document.getElementById('stat-liminares').textContent = d.excecoesCriticas || 0;
+  document.getElementById('stat-prazos').textContent = d.prazosSemana;
+  document.getElementById('stat-pendentes').textContent = moeda(d.financeiroVencido || 0);
 
   const tbody = document.querySelector('#tabela-recentes tbody');
   tbody.innerHTML = d.processosRecentes.map((p) => `
@@ -105,8 +132,60 @@ function renderDashboard() {
       <td>${p.area || '—'}</td>
     </tr>`).join('') || '<tr><td colspan="4">Nenhum processo cadastrado ainda.</td></tr>';
 
-  const lista = document.getElementById('lista-prazos');
-  lista.innerHTML = (d.proximosPrazos || []).map((e) => `<div class="prazo-item"><span><strong>${e.data ? new Date(e.data + 'T00:00:00').toLocaleDateString('pt-BR') : ''}</strong> — ${e.titulo || 'Prazo'}${e.processoNome ? ` · ${e.processoNome}` : ''}</span><span class="badge status-Aguardando">${e.tipo || 'Prazo'}</span></div>`).join('') || '<span class="card-label">Nenhum prazo nos próximos 7 dias.</span>';
+  renderDocumentosNovos(d.documentosNovos || []);
+  const alertas = document.getElementById('alertas-dashboard');
+  if (alertas) alertas.innerHTML = [
+    ...(d.tarefasVencidas || []).map((t) => `<div class="alerta"><strong>Prazo vencido:</strong> ${t.titulo} — ${dataBr(t.prazo)}</div>`),
+    ...(d.publicacoesNovas || []).map((p) => `<div class="alerta"><strong>Publicação não tratada:</strong> ${p.descricao}</div>`),
+  ].join('');
+  const resumo = (itens) => itens.map((t) => `<div class="tarefa-resumo"><strong>${t.titulo}</strong>${t.prazo ? ` · ${dataBr(t.prazo)}` : ''}</div>`).join('') || '<span class="card-label">Nenhuma tarefa.</span>';
+  const hojeEl = document.getElementById('tarefas-hoje');
+  const amanhaEl = document.getElementById('tarefas-amanha');
+  if (hojeEl) hojeEl.innerHTML = resumo(d.tarefasHoje || []);
+  if (amanhaEl) amanhaEl.innerHTML = resumo(d.tarefasAmanha || []);
+}
+
+function renderDocumentosNovos(lista) {
+  const painel = document.getElementById('painel-documentos-novos');
+  const badge = document.getElementById('badge-documentos-novos');
+  const container = document.getElementById('lista-documentos-novos');
+
+  if (!lista.length) {
+    painel.style.display = 'none';
+    badge.style.display = 'none';
+    return;
+  }
+
+  painel.style.display = 'block';
+  badge.style.display = 'inline-block';
+  badge.textContent = lista.length;
+
+  container.innerHTML = lista.map((doc) => `
+    <div class="checklist-item">
+      <div class="checklist-item-topo">
+        <strong>${doc.clienteNome} — ${doc.nome}</strong>
+        <span class="checklist-badge ok">Novo</span>
+      </div>
+      <small>${doc.nomeOriginal} — <a href="${doc.arquivo}" target="_blank" onclick="marcarDocumentoVisto(${doc.id})">abrir</a> · recebido em ${new Date(doc.criadoEm).toLocaleString('pt-BR')}</small>
+      <div style="margin-top:8px;">
+        <button class="btn-secondary" onclick="marcarDocumentoVisto(${doc.id})">Marcar como visto</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+async function marcarDocumentoVisto(id) {
+  await api(`/api/documentos/${id}/marcar-visto`, { method: 'POST' });
+  const d = await api('/api/dashboard');
+  state.dashboard = d;
+  renderDocumentosNovos(d.documentosNovos || []);
+}
+
+async function marcarTodosDocumentosVistos() {
+  await api('/api/documentos/marcar-todos-vistos', { method: 'POST' });
+  const d = await api('/api/dashboard');
+  state.dashboard = d;
+  renderDocumentosNovos(d.documentosNovos || []);
 }
 
 function renderKanban() {
@@ -147,15 +226,9 @@ function renderKanban() {
 
 function renderProcessos() {
   const tbody = document.querySelector('#tabela-processos tbody');
-  const busca = (document.getElementById('busca-processos') || {}).value || '';
-  const status = (document.getElementById('filtro-status') || {}).value || '';
-  const select = document.getElementById('filtro-status');
-  if (select && select.options.length === 1) select.innerHTML += STATUSES.map((s) => `<option value="${s}">${s}</option>`).join('');
-  const termo = busca.toLocaleLowerCase('pt-BR');
-  const itens = state.processos.filter((p) => (!status || p.status === status) && (!termo || `${p.nome || ''} ${nomeCliente(p.clienteId)}`.toLocaleLowerCase('pt-BR').includes(termo)));
-  tbody.innerHTML = itens.map((p) => `
+  tbody.innerHTML = state.processos.map((p) => `
     <tr>
-      <td>${p.nome || '—'}</td>
+      <td>${p.nome || '—'}${p.numeroProcesso ? '<br><small style="color:var(--text-light)">' + p.numeroProcesso + '</small>' : ''}</td>
       <td>${nomeCliente(p.clienteId)}</td>
       <td>${p.area || '—'}</td>
       <td><span class="badge ${classStatus(p.status)}">${p.status || '—'}</span></td>
@@ -185,20 +258,21 @@ function renderEventos() {
 
 function renderClientes() {
   const tbody = document.querySelector('#tabela-clientes tbody');
-  const busca = (document.getElementById('busca-clientes') || {}).value || '';
-  const termo = busca.toLocaleLowerCase('pt-BR');
-  const itens = state.clientes.filter((c) => !termo || `${c.nome || ''} ${c.documento || ''} ${c.telefone || ''} ${c.email || ''}`.toLocaleLowerCase('pt-BR').includes(termo));
-  tbody.innerHTML = itens.map((c) => `
+  tbody.innerHTML = state.clientes.map((c) => `
     <tr>
       <td>${c.nome || '—'}</td>
       <td>${c.documento || '—'}</td>
       <td>${c.telefone || '—'}</td>
       <td>${c.email || '—'}</td>
+      <td>${c.driveFolderUrl ? `<a href="${c.driveFolderUrl}" target="_blank" rel="noopener">Abrir pasta</a>` : `<span class="card-label" title="${textoSeguro(c.driveSyncErro || '')}">${textoSeguro(c.driveSyncStatus || 'Pendente')}</span>`}</td>
       <td>
         <button class="btn-icon" title="Editar" onclick="abrirModalCliente(${c.id})">✏️</button>
+        <button class="btn-icon" title="Preencher e enviar procuração" onclick="abrirModalProcuracao(${c.id})">🖋️</button>
+        <button class="btn-icon" title="Solicitar documentos" onclick="solicitarDocumentosCliente(${c.id})">🔗</button>
+        <button class="btn-icon" title="Criar ou sincronizar pasta no Drive" onclick="sincronizarDriveCliente(${c.id})">☁️</button>
         <button class="btn-icon" title="Excluir" onclick="excluir('clientes', ${c.id})">🗑️</button>
       </td>
-    </tr>`).join('') || '<tr><td colspan="5">Nenhum cliente cadastrado ainda.</td></tr>';
+    </tr>`).join('') || '<tr><td colspan="6">Nenhum cliente cadastrado ainda.</td></tr>';
 }
 
 function renderDocumentos() {
@@ -209,8 +283,308 @@ function renderDocumentos() {
       <td>${d.tipo || '—'}</td>
       <td>${d.clienteId ? nomeCliente(d.clienteId) : '—'}</td>
       <td>${d.processoId ? nomeProcesso(d.processoId) : '—'}</td>
-      <td><button class="btn-icon" title="Excluir" onclick="excluir('documentos', ${d.id})">🗑️</button></td>
-    </tr>`).join('') || '<tr><td colspan="5">Nenhum documento cadastrado ainda.</td></tr>';
+      <td>${d.driveFileUrl ? `<a href="${d.driveFileUrl}" target="_blank" rel="noopener">Abrir no Drive</a>` : `<span class="card-label" title="${textoSeguro(d.driveSyncErro || '')}">${textoSeguro(d.driveSyncStatus || 'Pendente')}</span>`}</td>
+      <td>${d.tipo === 'Procuração' ? `<span class="badge ${d.zapsignStatus === 'Assinado' ? 'risco-baixo' : 'risco-medio'}">${textoSeguro(d.zapsignStatus || d.statusAssinatura || 'Gerada')}</span>${d.zapsignSignUrl ? ` <button class="btn-secondary btn-small" onclick="copiarLinkAssinatura('${textoSeguro(d.zapsignSignUrl)}')">Copiar link</button>` : ''}` : '—'}</td>
+      <td>${d.tipo === 'Procuração' && !d.zapsignToken ? `<button class="btn-secondary btn-small" onclick="enviarProcuracaoZapSign(${d.id})">Enviar ZapSign</button>` : ''}<button class="btn-icon" title="Excluir" onclick="excluir('documentos', ${d.id})">🗑️</button></td>
+    </tr>`).join('') || '<tr><td colspan="7">Nenhum documento cadastrado ainda.</td></tr>';
+}
+
+function copiarLinkAssinatura(link) {
+  navigator.clipboard.writeText(link)
+    .then(() => alert('Link de assinatura copiado.'))
+    .catch(() => window.open(link, '_blank', 'noopener'));
+}
+
+async function enviarProcuracaoZapSign(id) {
+  try {
+    const resultado = await api(`/api/documentos/${id}/procuracao/enviar-zapsign`, { method: 'POST' });
+    await carregarTudo();
+    if (resultado.zapsign?.signUrl) copiarLinkAssinatura(resultado.zapsign.signUrl);
+    else alert('Procuração enviada à ZapSign.');
+  } catch (erro) { alert(erro.message); }
+}
+
+async function sincronizarDriveCliente(id) {
+  try {
+    const resultado = await api(`/api/clientes/${id}/drive/sincronizar`, { method: 'POST' });
+    await carregarTudo();
+    alert(`Pasta sincronizada. ${resultado.documentosSincronizados || 0} documento(s) enviado(s) ao Drive.`);
+  } catch (erro) {
+    alert(erro.message);
+  }
+}
+
+// ---------- Rotina Documental ----------
+// O link de envio de documentos é por CLIENTE (não por processo), pois o processo só é
+// criado depois que toda a documentação for reunida.
+function renderRotina() {
+  const select = document.getElementById('rotina-select-cliente');
+  if (!select) return;
+  const selecionadoAntes = select.value;
+  select.innerHTML = '<option value="">— selecione um cliente —</option>' +
+    state.clientes.map((c) => `<option value="${c.id}">${c.nome}</option>`).join('');
+  if (selecionadoAntes && state.clientes.some((c) => String(c.id) === selecionadoAntes)) {
+    select.value = selecionadoAntes;
+    carregarRotinaCliente();
+  }
+}
+
+function irParaView(nome) {
+  document.querySelectorAll('.nav-item[data-view]').forEach((b) => b.classList.remove('active'));
+  document.querySelectorAll('.view').forEach((v) => v.classList.remove('active'));
+  const btn = document.querySelector(`.nav-item[data-view="${nome}"]`);
+  if (btn) btn.classList.add('active');
+  document.getElementById('view-' + nome).classList.add('active');
+}
+
+function solicitarDocumentosCliente(id) {
+  irParaView('rotina');
+  const select = document.getElementById('rotina-select-cliente');
+  select.value = id;
+  carregarRotinaCliente();
+}
+
+const ORDEM_CATEGORIAS = ['Genérico', 'Direito da Saúde', 'FGTS, Previdenciário e Trabalhista', 'Ludopatia, Bancário e Família'];
+
+function categoriasAgrupadas() {
+  const grupos = {};
+  state.checklistTemplates.forEach((t) => {
+    if (!grupos[t.categoria]) grupos[t.categoria] = [];
+    grupos[t.categoria].push(t);
+  });
+  return ORDEM_CATEGORIAS.filter((c) => grupos[c]).map((c) => ({ categoria: c, templates: grupos[c] }));
+}
+
+async function carregarRotinaCliente() {
+  const id = document.getElementById('rotina-select-cliente').value;
+  const container = document.getElementById('rotina-conteudo');
+  if (!id) { container.innerHTML = ''; return; }
+  const dados = await api(`/api/clientes/${id}/rotina`);
+  const link = dados.cliente.uploadToken ? window.location.origin + '/enviar-documentos/' + dados.cliente.uploadToken : null;
+  const tiposAtivos = new Set(dados.cliente.tiposCaso || ['GEN']);
+
+  container.innerHTML = `
+    <div class="link-envio-box">
+      ${link
+        ? `<input type="text" readonly value="${link}" onclick="this.select()" /><button class="btn-secondary" onclick="copiarLinkRotina('${link}')">Copiar link</button>`
+        : '<span>Nenhum link gerado ainda para este cliente.</span>'}
+      <button class="btn-primary" onclick="gerarLinkRotina(${id})">${link ? 'Gerar novo link' : 'Gerar link para o cliente'}</button>
+    </div>
+
+    <div class="panel">
+      <div class="view-header">
+        <h3 style="margin:0;">Tipo(s) de caso — ${dados.cliente.nome}</h3>
+        <button class="btn-primary" onclick="salvarTiposCaso(${id})">Aplicar tipo(s) de caso</button>
+      </div>
+      <div class="notice">Escolha 1 ou mais tipos de caso. O checklist de documentos e a orientação de relato do cliente são montados automaticamente a partir daqui. Combine mais de um quando o caso reunir vários temas (ex: cirurgia + OPME + reembolso).</div>
+      <div class="tipo-caso-selector">
+        ${categoriasAgrupadas().map((grupo) => `
+          <div class="tipo-caso-categoria">
+            <h4>${grupo.categoria}</h4>
+            ${grupo.templates.map((t) => `
+              <label class="tipo-caso-item">
+                <input type="checkbox" class="chk-tipo-caso" value="${t.id}" ${tiposAtivos.has(t.id) ? 'checked' : ''} />
+                <span>${t.titulo} <small>(${t.quantidadeItens} itens${t.temOrientacao ? ' · com orientação de relato' : ''})</small></span>
+              </label>
+            `).join('')}
+          </div>
+        `).join('')}
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="view-header">
+        <h3 style="margin:0;">Checklist — ${dados.cliente.nome}</h3>
+        <button class="btn-secondary" onclick="salvarDocumentosSolicitados(${id})">Salvar seleção de documentos</button>
+      </div>
+      <div class="notice">Marque quais documentos devem ser pedidos a este cliente pelo link. Os desmarcados não aparecem para ele — nem entram na lista de pendências.</div>
+      ${agruparChecklistPorTemplate(dados.checklist)}
+    </div>
+  `;
+}
+
+function agruparChecklistPorTemplate(checklist) {
+  const grupos = [];
+  let atual = null;
+  checklist.forEach((item) => {
+    if (!atual || atual.templateId !== item.templateId) {
+      atual = { templateId: item.templateId, templateTitulo: item.templateTitulo, itens: [] };
+      grupos.push(atual);
+    }
+    atual.itens.push(item);
+  });
+  if (!grupos.length) return '<p class="notice">Nenhum tipo de caso selecionado ainda.</p>';
+  return grupos.map((g) => `
+    <div class="checklist-template-grupo">
+      <h4 class="checklist-template-titulo">${g.templateTitulo}</h4>
+      ${g.itens.map((item) => `
+        <div class="checklist-item ${item.enviado ? 'enviado' : ''} ${item.solicitado ? '' : 'nao-solicitado'}">
+          <div class="checklist-item-topo">
+            <label style="display:flex;align-items:center;gap:8px;margin:0;">
+              <input type="checkbox" class="chk-solicitado" data-codigo="${item.codigo}" ${item.solicitado ? 'checked' : ''} style="width:auto;" />
+              <strong>${item.rotulo}</strong>
+            </label>
+            <span class="checklist-badge ${item.enviado ? 'ok' : 'pendente'}">${item.enviado ? 'Recebido' : (item.solicitado ? 'Pendente' : 'Não solicitado')}</span>
+          </div>
+          ${item.enviado ? `<small>${item.nomeOriginal} — <a href="${item.arquivo}" target="_blank">abrir</a></small>` : ''}
+        </div>
+      `).join('')}
+    </div>
+  `).join('');
+}
+
+async function salvarTiposCaso(id) {
+  const tipos = [...document.querySelectorAll('.chk-tipo-caso:checked')].map((el) => el.value);
+  await api(`/api/clientes/${id}/tipos-caso`, { method: 'PUT', body: JSON.stringify({ tipos }) });
+  await carregarRotinaCliente();
+}
+
+async function salvarDocumentosSolicitados(id) {
+  const codigos = [...document.querySelectorAll('.chk-solicitado:checked')].map((el) => el.dataset.codigo);
+  await api(`/api/clientes/${id}/documentos-solicitados`, { method: 'PUT', body: JSON.stringify({ codigos }) });
+  await carregarRotinaCliente();
+}
+
+async function gerarLinkRotina(id) {
+  await api(`/api/clientes/${id}/link-envio`, { method: 'POST' });
+  await carregarRotinaCliente();
+}
+
+function copiarLinkRotina(link) {
+  navigator.clipboard.writeText(link).then(() => alert('Link copiado! Envie para o cliente por WhatsApp ou e-mail.'));
+}
+
+function renderLeads() {
+  const board = document.getElementById('leads-board');
+  if (!board) return;
+  const status = document.getElementById('whatsapp-status');
+  if (status) {
+    status.className = `whatsapp-status ${state.whatsapp.conectado ? 'conectado' : 'pendente'}`;
+    status.innerHTML = state.whatsapp.conectado
+      ? `<strong>Recebimento conectado à Meta</strong><span>${state.whatsapp.ultimaEntrada ? `Última mensagem recebida em ${new Date(state.whatsapp.ultimaEntrada).toLocaleString('pt-BR')}.` : 'Receptor ativo; aguardando a primeira mensagem.'} ${state.whatsapp.envioConfigurado ? 'Respostas pelo CRM liberadas.' : 'O envio será liberado após o cadastro do novo número.'}</span>`
+      : (state.whatsapp.configurado
+        ? '<strong>WhatsApp configurado</strong><span>Aguardando a primeira confirmação assinada enviada pela Meta.</span>'
+        : '<strong>Receptor instalado no CRM</strong><span>Falta concluir a vinculação no painel da Meta e cadastrar os dois segredos na Render.</span>');
+  }
+  board.innerHTML = ETAPAS_LEAD.map((etapa) => `<div class="kanban-col"><h4>${etapa} (${state.leads.filter((l) => l.etapa === etapa).length})</h4><div class="kanban-cards">${state.leads.filter((l) => l.etapa === etapa).map((l) => {
+    const telefone = telefoneWhatsApp(l.telefone);
+    const naoLidas = Number(l.naoLidas || 0);
+    return `<div class="kanban-card"><div class="lead-card-topo"><strong>${textoSeguro(l.nome)}</strong>${naoLidas ? `<span class="lead-unread">${naoLidas}</span>` : ''}</div>${l.ultimaMensagem ? `<div class="lead-preview">${textoSeguro(l.ultimaMensagem)}</div>` : ''}${telefone ? `<a href="https://wa.me/${telefone}" target="_blank" rel="noopener">Abrir WhatsApp</a><br>` : ''}<small>${textoSeguro(l.origem || 'Contato direto')}</small><div class="lead-actions">${Array.isArray(l.interacoes) && l.interacoes.length ? `<button class="btn-icon" onclick="abrirHistoricoLead(${l.id})">Histórico</button>` : ''}<button class="btn-icon" onclick="moverLead(${l.id})">Avançar</button></div></div>`;
+  }).join('') || '<span class="card-label">Sem leads</span>'}</div></div>`).join('');
+}
+
+function telefoneWhatsApp(valor) {
+  const digitos = String(valor || '').replace(/\D/g, '');
+  if (!digitos) return '';
+  return digitos.startsWith('55') && digitos.length >= 12 ? digitos : `55${digitos}`;
+}
+
+function abrirHistoricoLead(id) {
+  const lead = state.leads.find((item) => item.id === id);
+  if (!lead) return;
+  const interacoes = [...(lead.interacoes || [])].sort((a, b) => String(a.criadoEm).localeCompare(String(b.criadoEm)));
+  const compositor = state.whatsapp.envioConfigurado
+    ? `<div class="conversation-composer"><label for="resposta-whatsapp">Responder pelo WhatsApp</label><textarea id="resposta-whatsapp" maxlength="4096" rows="3" placeholder="Digite sua mensagem"></textarea><div class="composer-footer"><small>Respostas fora da janela de atendimento podem exigir um modelo aprovado pela Meta.</small><button class="btn-primary" id="btn-enviar-whatsapp" onclick="enviarRespostaWhatsApp(${lead.id})">Enviar</button></div></div>`
+    : '<div class="conversation-disabled">O recebimento está pronto. O envio será liberado amanhã, depois que o novo número e o token da Meta forem cadastrados.</div>';
+  modalBox.innerHTML = `<h3>Conversas — ${textoSeguro(lead.nome)}</h3><div class="conversation-list">${interacoes.map((item) => `<div class="conversation-item ${item.direcao === 'saida' ? 'saida' : 'entrada'}"><div>${textoSeguro(item.texto || `[${item.tipo || 'mensagem'}]`)}</div><small>${item.criadoEm ? new Date(item.criadoEm).toLocaleString('pt-BR') : ''}${item.status ? ` · ${textoSeguro(item.status)}` : ''}</small></div>`).join('') || '<p>Nenhuma conversa registrada.</p>'}</div>${compositor}<div class="modal-actions"><button class="btn-secondary" onclick="fecharModal()">Fechar</button>${Number(lead.naoLidas || 0) ? `<button class="btn-primary" onclick="marcarLeadComoLido(${lead.id})">Marcar como lidas</button>` : ''}</div>`;
+  overlay.classList.add('active');
+  const lista = modalBox.querySelector('.conversation-list');
+  if (lista) lista.scrollTop = lista.scrollHeight;
+}
+
+async function enviarRespostaWhatsApp(id) {
+  const campo = document.getElementById('resposta-whatsapp');
+  const botao = document.getElementById('btn-enviar-whatsapp');
+  const texto = String(campo ? campo.value : '').trim();
+  if (!texto) return alert('Digite a mensagem antes de enviar.');
+  if (botao) botao.disabled = true;
+  try {
+    await api(`/api/leads/${id}/whatsapp/mensagens`, { method: 'POST', body: JSON.stringify({ texto }) });
+    await carregarTudo();
+    abrirHistoricoLead(id);
+  } catch (erro) {
+    alert(erro.message);
+    if (botao) botao.disabled = false;
+  }
+}
+
+async function marcarLeadComoLido(id) {
+  await api(`/api/leads/${id}/marcar-lidas`, { method: 'POST' });
+  fecharModal();
+  await carregarTudo();
+}
+
+function renderTarefas() {
+  const tbody = document.querySelector('#tabela-tarefas tbody');
+  if (!tbody) return;
+  tbody.innerHTML = [...state.tarefas].sort((a, b) => String(a.prazo || '9999').localeCompare(String(b.prazo || '9999'))).map((t) => {
+    const aguardando = t.status === 'Aguardando revisão';
+    const concluida = t.status === 'Concluída';
+    const acao = aguardando ? `<button class="btn-primary btn-small" onclick="revisarTarefa(${t.id})">Revisar</button>` : (!concluida ? `<button class="btn-primary btn-small" onclick="concluirTarefa(${t.id})">Concluir</button>` : '✓');
+    return `<tr><td>${t.titulo}</td><td>${t.processoId ? nomeProcesso(t.processoId) : '—'}</td><td>${dataBr(t.prazo)} ${t.tipoPrazo === 'Fatal' ? '<span class="badge status-Aguardando">fatal</span>' : ''}</td><td>${t.prioridade || 'Média'}</td><td>${t.status || 'A fazer'}</td><td>${t.evidencia || '—'}</td><td>${acao}<button class="btn-icon" onclick="excluir('tarefas', ${t.id})">🗑️</button></td></tr>`;
+  }).join('') || '<tr><td colspan="7">Nenhuma tarefa cadastrada.</td></tr>';
+}
+
+function renderPublicacoes() {
+  const tbody = document.querySelector('#tabela-publicacoes tbody');
+  if (!tbody) return;
+  tbody.innerHTML = state.publicacoes.map((p) => `<tr><td>${dataBr(p.dataPublicacao)}</td><td>${p.processoId ? nomeProcesso(p.processoId) : `<span class="badge risco-critico">Não conciliado${p.numeroProcesso ? ` · ${p.numeroProcesso}` : ''}</span>`}</td><td>${p.descricao}</td><td>${dataBr(p.prazoFatal)}</td><td>${p.status}</td><td>${p.status === 'Nova' && p.processoId ? `<button class="btn-primary btn-small" onclick="criarTarefaPublicacao(${p.id})">Criar tarefa</button>` : (p.status === 'Nova' ? 'Vincule o processo' : '✓')}</td></tr>`).join('') || '<tr><td colspan="6">Nenhuma publicação registrada.</td></tr>';
+}
+
+function renderControladoria() {
+  const dados = state.controladoria || { resumo: {}, itens: [] };
+  const resumo = dados.resumo || {};
+  document.getElementById('ctrl-total').textContent = resumo.total || 0;
+  document.getElementById('ctrl-criticos').textContent = resumo.criticos || 0;
+  document.getElementById('ctrl-altos').textContent = resumo.altos || 0;
+  document.getElementById('ctrl-medios').textContent = resumo.medios || 0;
+  document.querySelector('#tabela-controladoria tbody').innerHTML = (dados.itens || []).map((i) => `<tr><td><span class="badge ${riscoClasse(i.risco)}">${i.risco}</span></td><td>${i.tipo}</td><td><strong>${i.titulo}</strong></td><td><small>${i.fonte}</small><br>${i.evidencia}</td><td>${i.acao}</td><td>${i.confianca}</td></tr>`).join('') || '<tr><td colspan="6"><div class="empty-success">Nenhuma exceção encontrada na conferência atual.</div></td></tr>';
+}
+
+function renderFinanceiro() {
+  const f = state.financeiro || {};
+  const z = state.zapsign || {};
+  document.getElementById('fin-contratado').textContent = moeda(f.totalContratado);
+  document.getElementById('fin-taxas').textContent = moeda(f.totalTaxasCartao);
+  document.getElementById('fin-liquido').textContent = moeda(f.totalLiquidoPrevisto);
+  document.getElementById('fin-recebido').textContent = moeda(f.totalRecebido);
+  document.getElementById('fin-receber').textContent = moeda(f.aReceber);
+  document.getElementById('fin-vencido').textContent = moeda(f.vencido);
+  document.getElementById('fin-30').textContent = moeda(f.projecao30);
+  document.getElementById('fin-60').textContent = moeda(f.projecao60);
+  document.getElementById('fin-90').textContent = moeda(f.projecao90);
+  const statusZap = document.getElementById('zapsign-status');
+  statusZap.className = `integration-status ${z.webhookConfigurado && z.apiConfigurada ? 'ativo' : 'pendente'}`;
+  statusZap.innerHTML = z.webhookConfigurado && z.apiConfigurada
+    ? `<strong>ZapSign conectada</strong><span>Assinaturas e mudanças de status são sincronizadas automaticamente.${z.ultimoWebhookEm ? ` Último evento: ${new Date(z.ultimoWebhookEm).toLocaleString('pt-BR')}.` : ''}</span>`
+    : `<strong>ZapSign preparada</strong><span>Os contratos já aceitam o documento assinado e o identificador da ZapSign. Falta ativar ${!z.apiConfigurada ? 'o token da API' : ''}${!z.apiConfigurada && !z.webhookConfigurado ? ' e ' : ''}${!z.webhookConfigurado ? 'o webhook seguro' : ''}.</span>`;
+  document.querySelector('#tabela-contratos tbody').innerHTML = (f.contratos || []).map((c) => {
+    const situacao = c.vencido ? 'Vencido' : (c.saldo ? 'Em aberto' : 'Quitado');
+    const assinatura = c.zapsignStatus || c.statusAssinatura || 'Não vinculada';
+    const links = [c.documentoDriveUrl ? `<a href="${c.documentoDriveUrl}" target="_blank" rel="noopener">Drive</a>` : '', c.zapsignToken ? '<span class="badge risco-baixo">ZapSign</span>' : ''].filter(Boolean).join(' ');
+    return `<tr><td>${nomeCliente(c.clienteId)}</td><td><strong>${c.descricao}</strong><div class="contract-links">${links}</div></td><td>${c.numeroParcelasCliente || 1}× ${moeda(c.valorParcelaCliente)}</td><td>${moeda(c.valorTotal)}${c.honorarioExitoPercentual ? `<br><small>+ ${c.honorarioExitoPercentual}% de êxito</small>` : ''}</td><td>${moeda(c.valorLiquidoPrevisto)}<br><small>tarifas: ${moeda(c.taxaCartaoValor)}</small></td><td>${dataBr(c.proximoVencimento)}<br><small>${moeda(c.proximaParcelaValor)}</small><br><span class="badge ${c.vencido ? 'risco-critico' : 'risco-baixo'}">${situacao}</span></td><td>${assinatura}</td><td><button class="btn-secondary btn-small" onclick="verContrato(${c.id})">Detalhes</button></td></tr>`;
+  }).join('') || '<tr><td colspan="8">Nenhum contrato cadastrado.</td></tr>';
+  document.querySelector('#tabela-pagamentos-soltos tbody').innerHTML = (f.pagamentosSemContrato || []).map((p) => `<tr><td>${dataBr(p.data)}</td><td>${p.descricao || 'Recebimento'}</td><td>${moeda(p.valor)}</td><td><button class="btn-secondary btn-small" onclick="editarPagamento(${p.id})">Corrigir e vincular</button></td></tr>`).join('') || '<tr><td colspan="4">Nenhum recebimento sem contrato.</td></tr>';
+  const extrato = f.extrato || [];
+  document.getElementById('fin-extrato-total').textContent = extrato.length ? ` Total: ${moeda(extrato.reduce((s, p) => s + p.valor, 0))} em ${extrato.length} recebimento(s).` : '';
+  document.querySelector('#tabela-extrato-recebimentos tbody').innerHTML = extrato.map((p) => `<tr><td>${dataBr(p.data)}</td><td>${p.cliente}</td><td>${p.descricao}</td><td>${moeda(p.valor)}</td></tr>`).join('') || '<tr><td colspan="4">Nenhum recebimento registrado ainda.</td></tr>';
+}
+
+function verContrato(id) {
+  const c = (state.financeiro.contratos || []).find((item) => item.id === id);
+  if (!c) return;
+  const repasses = (c.repasses || []).map((p) => `<div class="installment-row"><strong>${p.numero}º</strong><span>${dataBr(p.vencimento)}</span><span>${moeda(p.valor)}${p.valorPago ? ` · recebido ${moeda(p.valorPago)}` : ''}</span><span class="badge ${p.situacao === 'Atrasado' ? 'risco-critico' : 'risco-baixo'}">${p.situacao}</span></div>`).join('');
+  const links = c.documentoDriveUrl ? `<a class="btn-secondary" href="${c.documentoDriveUrl}" target="_blank" rel="noopener">Abrir contrato assinado no Drive</a>` : '';
+  modalBox.classList.add('modal-wide');
+  modalBox.innerHTML = `<h3>${c.descricao}</h3><p><strong>${nomeCliente(c.clienteId)}</strong></p><div class="notice"><strong>Cliente:</strong> ${c.numeroParcelasCliente || 1}× ${moeda(c.valorParcelaCliente)} no ${c.formaPagamento || 'meio informado'}.<br><strong>Escritório:</strong> repasse líquido previsto de ${moeda(c.valorLiquidoPrevisto)}, após ${moeda(c.taxaCartaoValor)} de tarifas.</div>${c.honorarioExitoPercentual ? `<div class="notice">Honorários de êxito: ${c.honorarioExitoPercentual}% sobre ${c.honorarioExitoBase || 'a base definida no contrato'}. Este valor é condicional e não foi somado ao saldo fixo.</div>` : ''}<p><strong>Assinatura ZapSign:</strong> ${c.zapsignStatus || c.statusAssinatura || 'Não vinculada'}</p><h4>Repasse(s) da operadora</h4><div class="installment-list">${repasses}</div><div class="modal-actions">${links}${state.zapsign.apiConfigurada && c.zapsignToken ? `<button class="btn-secondary" onclick="sincronizarZapSign(${c.id})">Atualizar ZapSign</button>` : ''}${c.saldo ? `<button class="btn-primary" onclick="abrirModalPagamento(${c.id}, ${c.proximaParcelaValor || 0})">Registrar repasse recebido</button>` : ''}<button class="btn-secondary" onclick="fecharModal()">Fechar</button></div>`;
+  overlay.classList.add('active');
+}
+
+async function sincronizarZapSign(id) {
+  try {
+    await api(`/api/integracoes/zapsign/contratos/${id}/sincronizar`, { method: 'POST' });
+    fecharModal(); await carregarTudo();
+  } catch (e) { alert(e.message); }
 }
 
 let charts = {};
@@ -244,6 +618,106 @@ function renderUsuarios() {
     </tr>`).join('') || '<tr><td colspan="4">Nenhum usuário cadastrado ainda.</td></tr>';
 }
 
+function abrirModalLead() {
+  modalBox.innerHTML = `<h3>Novo Lead</h3><label>Nome</label><input id="f-nome"><label>Telefone / WhatsApp</label><input id="f-telefone"><label>Origem</label><input id="f-origem" placeholder="Ex.: indicação, Instagram"><label>Etapa</label><select id="f-etapa">${opcoesLista(ETAPAS_LEAD, '1. Prospecção')}</select><div class="modal-actions"><button class="btn-secondary" onclick="fecharModal()">Cancelar</button><button class="btn-primary" onclick="salvarLead()">Salvar</button></div>`;
+  overlay.classList.add('active');
+}
+async function salvarLead() {
+  await api('/api/leads', { method:'POST', body:JSON.stringify({ nome:document.getElementById('f-nome').value, telefone:document.getElementById('f-telefone').value, origem:document.getElementById('f-origem').value, etapa:document.getElementById('f-etapa').value }) });
+  fecharModal(); await carregarTudo();
+}
+async function moverLead(id) {
+  const lead = state.leads.find((l) => l.id === id);
+  const pos = ETAPAS_LEAD.indexOf(lead.etapa);
+  await api(`/api/leads/${id}`, { method:'PUT', body:JSON.stringify({ etapa:ETAPAS_LEAD[Math.min(pos + 1, ETAPAS_LEAD.length - 1)] }) });
+  await carregarTudo();
+}
+
+function abrirModalTarefa() {
+  modalBox.innerHTML = `<h3>Nova Tarefa</h3><label>Título</label><input id="f-titulo"><label>Processo</label><select id="f-processo">${opcoesProcessos()}</select><label>Prazo</label><input type="date" id="f-prazo"><label>Tipo de prazo</label><select id="f-tipo-prazo"><option>Interno</option><option>Fatal</option></select><label>Prioridade</label><select id="f-prioridade"><option>Alta</option><option selected>Média</option><option>Baixa</option></select><label>Status</label><select id="f-status-tarefa">${opcoesLista(STATUS_TAREFA, 'A fazer')}</select><div class="modal-actions"><button class="btn-secondary" onclick="fecharModal()">Cancelar</button><button class="btn-primary" onclick="salvarTarefa()">Salvar</button></div>`;
+  overlay.classList.add('active');
+}
+async function salvarTarefa() {
+  await api('/api/tarefas', { method:'POST', body:JSON.stringify({ titulo:document.getElementById('f-titulo').value, processoId:Number(document.getElementById('f-processo').value)||null, prazo:document.getElementById('f-prazo').value, tipoPrazo:document.getElementById('f-tipo-prazo').value, prioridade:document.getElementById('f-prioridade').value, status:document.getElementById('f-status-tarefa').value, responsavelId:usuarioAtual.id }) });
+  fecharModal(); await carregarTudo();
+}
+function concluirTarefa(id) {
+  modalBox.innerHTML = `<h3>Concluir tarefa</h3><div class="notice">Registre como o trabalho pode ser conferido: protocolo, link, documento, e-mail enviado ou resumo objetivo.</div><label>Evidência da conclusão</label><textarea id="f-evidencia" rows="4" placeholder="Ex.: Petição protocolada no PJe, ID 123456."></textarea><label class="check-line"><input type="checkbox" id="f-revisao"> Enviar para revisão antes da conclusão definitiva</label><div class="modal-actions"><button class="btn-secondary" onclick="fecharModal()">Cancelar</button><button class="btn-primary" onclick="salvarConclusaoTarefa(${id})">Registrar</button></div>`;
+  overlay.classList.add('active');
+}
+async function salvarConclusaoTarefa(id) {
+  try {
+    await api(`/api/tarefas/${id}/concluir`, { method:'POST', body:JSON.stringify({ evidencia:document.getElementById('f-evidencia').value, enviarParaRevisao:document.getElementById('f-revisao').checked }) });
+    fecharModal(); await carregarTudo();
+  } catch (e) { alert(e.message); }
+}
+async function revisarTarefa(id) {
+  const observacao = prompt('Observação da revisão (opcional):') || '';
+  await api(`/api/tarefas/${id}/revisar`, { method:'POST', body:JSON.stringify({ observacao }) });
+  await carregarTudo();
+}
+
+function abrirModalPublicacao() {
+  modalBox.innerHTML = `<h3>Registrar publicação</h3><label>Processo cadastrado (se localizado)</label><select id="f-processo">${opcoesProcessos()}</select><label>Número CNJ informado na publicação</label><input id="f-numero-processo" placeholder="0000000-00.0000.0.00.0000"><label>Descrição</label><textarea id="f-descricao" rows="4"></textarea><label>Data da publicação</label><input type="date" id="f-data-publicacao"><label>Prazo fatal</label><input type="date" id="f-prazo-fatal"><label>Tribunal/órgão</label><select id="f-tribunal"><option>TJMG</option><option>TRT-3</option><option>TRF-6</option><option>DJEN/CNJ</option><option>Outro</option></select><div class="modal-actions"><button class="btn-secondary" onclick="fecharModal()">Cancelar</button><button class="btn-primary" onclick="salvarPublicacao()">Salvar</button></div>`;
+  overlay.classList.add('active');
+}
+async function salvarPublicacao() {
+  await api('/api/publicacoes', { method:'POST', body:JSON.stringify({ processoId:Number(document.getElementById('f-processo').value)||null, numeroProcesso:document.getElementById('f-numero-processo').value, descricao:document.getElementById('f-descricao').value, dataPublicacao:document.getElementById('f-data-publicacao').value, prazoFatal:document.getElementById('f-prazo-fatal').value, tribunal:document.getElementById('f-tribunal').value }) });
+  fecharModal(); await carregarTudo();
+}
+async function criarTarefaPublicacao(id) {
+  await api(`/api/publicacoes/${id}/criar-tarefa`, { method:'POST', body:JSON.stringify({ responsavelId:usuarioAtual.id }) });
+  await carregarTudo();
+}
+
+function abrirModalContrato() {
+  modalBox.classList.add('modal-wide');
+  modalBox.innerHTML = `<h3>Novo contrato de honorários</h3><label>Cliente</label><select id="f-cliente"><option value="">— selecione —</option>${opcoesClientes()}</select><label>Processo (opcional)</label><select id="f-processo">${opcoesProcessos()}</select><label>Descrição</label><input id="f-descricao" placeholder="Ex.: Honorários ação previdenciária"><label>Tipo de honorário</label><select id="f-tipo-honorario"><option>Fixo</option><option>Êxito</option><option selected>Misto</option></select><h4>Condição oferecida à cliente</h4><label>Valor bruto contratado</label><input id="f-valor" type="number" min="0" step="0.01" oninput="recalcularContratoCartao()"><label>Parcelas da cliente</label><input id="f-parcelas-cliente" type="number" min="1" step="1" value="1" oninput="recalcularContratoCartao()"><label>Valor de cada parcela</label><input id="f-valor-parcela-cliente" type="number" min="0" step="0.01"><label>Forma de pagamento</label><select id="f-forma-pagamento"><option>Cartão de crédito</option><option>PIX</option><option>Boleto</option><option>Transferência</option><option>Dinheiro</option><option>Outro</option></select><h4>Repasse ao escritório</h4><div class="notice">Informe o valor líquido e a data mostrados no extrato da operadora. O parcelamento da cliente não será tratado como recebimento mensal do escritório.</div><label>Tarifas descontadas pela operadora</label><input id="f-taxa-cartao" type="number" min="0" step="0.01" oninput="recalcularContratoCartao('taxa')"><label>Valor líquido previsto em 1 repasse</label><input id="f-liquido-previsto" type="number" min="0" step="0.01" oninput="recalcularContratoCartao('liquido')"><label>Data prevista do repasse</label><input id="f-data-repasse" type="date"><label>Data do contrato</label><input id="f-data-contrato" type="date"><label>Honorários de êxito (%)</label><input id="f-exito" type="number" min="0" max="100" step="0.01"><label>Base dos honorários de êxito</label><input id="f-base-exito" placeholder="Ex.: valor da causa e eventual multa"><label>Link permanente do contrato assinado no Drive</label><input id="f-drive-url" type="url" placeholder="https://drive.google.com/..."><label>Identificador do documento na ZapSign</label><input id="f-zapsign-token" placeholder="Token/UUID do documento"><label>Status da assinatura</label><select id="f-zapsign-status"><option>Aguardando assinatura</option><option>Assinado</option><option>Recusado</option><option>Expirado</option></select><label>Status financeiro</label><select id="f-status"><option>Ativo</option><option>Quitado</option><option>Cancelado</option></select><div class="modal-actions"><button class="btn-secondary" onclick="fecharModal()">Cancelar</button><button class="btn-primary" onclick="salvarContrato()">Salvar contrato</button></div>`;
+  overlay.classList.add('active');
+}
+function recalcularContratoCartao(origem = 'total') {
+  const total = Number(document.getElementById('f-valor').value) || 0;
+  const quantidade = Number(document.getElementById('f-parcelas-cliente').value) || 1;
+  const taxa = Number(document.getElementById('f-taxa-cartao').value) || 0;
+  const liquido = Number(document.getElementById('f-liquido-previsto').value) || 0;
+  document.getElementById('f-valor-parcela-cliente').value = (total / quantidade).toFixed(2);
+  if (origem === 'liquido') document.getElementById('f-taxa-cartao').value = Math.max(0, total - liquido).toFixed(2);
+  else document.getElementById('f-liquido-previsto').value = Math.max(0, total - taxa).toFixed(2);
+}
+async function salvarContrato() {
+  try {
+    await api('/api/contratos', { method:'POST', body:JSON.stringify({ clienteId:Number(document.getElementById('f-cliente').value)||null, processoId:Number(document.getElementById('f-processo').value)||null, descricao:document.getElementById('f-descricao').value, tipoHonorario:document.getElementById('f-tipo-honorario').value, valorTotal:Number(document.getElementById('f-valor').value), numeroParcelasCliente:Number(document.getElementById('f-parcelas-cliente').value)||1, valorParcelaCliente:Number(document.getElementById('f-valor-parcela-cliente').value)||0, formaPagamento:document.getElementById('f-forma-pagamento').value, numeroRepasses:1, taxaCartaoValor:Number(document.getElementById('f-taxa-cartao').value)||0, valorLiquidoPrevisto:Number(document.getElementById('f-liquido-previsto').value)||0, dataPrimeiroRepasse:document.getElementById('f-data-repasse').value||null, dataContrato:document.getElementById('f-data-contrato').value||null, honorarioExitoPercentual:Number(document.getElementById('f-exito').value)||0, honorarioExitoBase:document.getElementById('f-base-exito').value, documentoDriveUrl:document.getElementById('f-drive-url').value||null, zapsignToken:document.getElementById('f-zapsign-token').value||null, zapsignStatus:document.getElementById('f-zapsign-status').value, status:document.getElementById('f-status').value }) });
+    fecharModal(); await carregarTudo();
+  } catch (e) { alert(e.message); }
+}
+function abrirModalPagamento(contratoId = null, valorSugerido = null) {
+  fecharModal();
+  const opcoes = state.contratos.map((c) => `<option value="${c.id}">${c.descricao} · ${nomeCliente(c.clienteId)}</option>`).join('');
+  modalBox.innerHTML = `<h3>Registrar recebimento</h3><label>Contrato (deixe vazio se ainda não conciliado)</label><select id="f-contrato"><option value="">— não conciliado —</option>${opcoes}</select><label>Data</label><input id="f-data" type="date" value="${new Date().toISOString().slice(0, 10)}"><label>Valor líquido recebido</label><input id="f-valor" type="number" min="0" step="0.01" value="${valorSugerido || ''}"><label>Descrição / comprovante</label><input id="f-descricao" placeholder="Ex.: Repasse líquido da operadora do cartão"><div class="modal-actions"><button class="btn-secondary" onclick="fecharModal()">Cancelar</button><button class="btn-primary" onclick="salvarPagamento()">Salvar</button></div>`;
+  overlay.classList.add('active');
+  if (contratoId) document.getElementById('f-contrato').value = String(contratoId);
+}
+function editarPagamento(id) {
+  const pagamento = state.pagamentos.find((p) => p.id === id);
+  if (!pagamento) return;
+  const opcoes = state.contratos.map((c) => `<option value="${c.id}">${c.descricao} · ${nomeCliente(c.clienteId)}</option>`).join('');
+  modalBox.innerHTML = `<h3>Corrigir e conciliar recebimento</h3><label>Contrato</label><select id="f-contrato"><option value="">— não conciliado —</option>${opcoes}</select><label>Data efetiva do crédito</label><input id="f-data" type="date" value="${pagamento.data || ''}"><label>Valor líquido recebido</label><input id="f-valor" type="number" min="0" step="0.01" value="${pagamento.valor || ''}"><label>Descrição / comprovante</label><input id="f-descricao" value="${pagamento.descricao || ''}"><div class="modal-actions"><button class="btn-secondary" onclick="fecharModal()">Cancelar</button><button class="btn-primary" onclick="salvarEdicaoPagamento(${id})">Salvar correção</button></div>`;
+  overlay.classList.add('active');
+  document.getElementById('f-contrato').value = pagamento.contratoId ? String(pagamento.contratoId) : '';
+}
+async function salvarEdicaoPagamento(id) {
+  try {
+    await api(`/api/pagamentos/${id}`, { method:'PUT', body:JSON.stringify({ contratoId:Number(document.getElementById('f-contrato').value)||null, data:document.getElementById('f-data').value, valor:Number(document.getElementById('f-valor').value), descricao:document.getElementById('f-descricao').value }) });
+    fecharModal(); await carregarTudo();
+  } catch (e) { alert(e.message); }
+}
+async function salvarPagamento() {
+  try {
+    await api('/api/pagamentos', { method:'POST', body:JSON.stringify({ contratoId:Number(document.getElementById('f-contrato').value)||null, data:document.getElementById('f-data').value, valor:Number(document.getElementById('f-valor').value), descricao:document.getElementById('f-descricao').value }) });
+    fecharModal(); await carregarTudo();
+  } catch (e) { alert(e.message); }
+}
+
 // ---------- Exclusão ----------
 async function excluir(recurso, id) {
   if (!confirm('Confirma exclusão?')) return;
@@ -257,6 +731,7 @@ const modalBox = document.getElementById('modal-box');
 
 function fecharModal() {
   overlay.classList.remove('active');
+  modalBox.classList.remove('modal-wide');
   modalBox.innerHTML = '';
 }
 overlay.addEventListener('click', (e) => { if (e.target === overlay) fecharModal(); });
@@ -277,7 +752,15 @@ function abrirModalCliente(id) {
   overlay.classList.add('active');
 }
 
+let salvandoCliente = false;
 async function salvarCliente(id) {
+  if (salvandoCliente) return;
+  salvandoCliente = true;
+  const botaoSalvar = modalBox.querySelector('.btn-primary');
+  if (botaoSalvar) {
+    botaoSalvar.disabled = true;
+    botaoSalvar.textContent = 'Salvando...';
+  }
   const body = {
     nome: document.getElementById('f-nome').value,
     documento: document.getElementById('f-documento').value,
@@ -285,10 +768,116 @@ async function salvarCliente(id) {
     email: document.getElementById('f-email').value,
     endereco: document.getElementById('f-endereco').value,
   };
-  if (id) await api(`/api/clientes/${id}`, { method: 'PUT', body: JSON.stringify(body) });
-  else await api('/api/clientes', { method: 'POST', body: JSON.stringify(body) });
-  fecharModal();
-  await carregarTudo();
+  try {
+    if (id) await api(`/api/clientes/${id}`, { method: 'PUT', body: JSON.stringify(body) });
+    else await api('/api/clientes', { method: 'POST', body: JSON.stringify(body) });
+    fecharModal();
+    await carregarTudo();
+  } finally {
+    salvandoCliente = false;
+    if (botaoSalvar?.isConnected) {
+      botaoSalvar.disabled = false;
+      botaoSalvar.textContent = 'Salvar';
+    }
+  }
+}
+
+function abrirModalProcuracao(id) {
+  const c = state.clientes.find((item) => item.id === Number(id));
+  if (!c) return;
+  const ativa = state.documentos.find((item) =>
+    item.clienteId === c.id && item.tipo === 'Procuração' &&
+    !['Assinado', 'Recusado', 'Expirado', 'Excluído'].includes(item.zapsignStatus)
+  );
+  modalBox.classList.add('modal-wide');
+  if (ativa) {
+    modalBox.innerHTML = `
+      <h3>Procuração de ${textoSeguro(c.nome)}</h3>
+      <div class="notice">Já existe uma procuração ativa. Para evitar duas procurações ocupando a numeração documental, utilize o documento existente.</div>
+      <p><strong>Status:</strong> ${textoSeguro(ativa.statusAssinatura || 'Gerada')}</p>
+      <div class="modal-actions">
+        <a class="btn-secondary" href="${ativa.arquivo}" target="_blank" rel="noopener">Abrir PDF</a>
+        ${ativa.driveFileUrl ? `<button class="btn-primary" onclick="copiarLinkAssinatura('${textoSeguro(ativa.driveFileUrl)}')">Copiar link para assinatura</button>` : ''}
+        <button class="btn-secondary" onclick="fecharModal()">Fechar</button>
+      </div>`;
+    overlay.classList.add('active');
+    return;
+  }
+  const hoje = new Date().toISOString().slice(0, 10);
+  modalBox.innerHTML = `
+    <h3>Gerar procuração</h3>
+    <div class="notice">Confira os dados da outorgante. Ao confirmar, o CRM gera o PDF, salva como <strong>02 - PROCURAÇÃO</strong> no Drive e devolve o link para você encaminhar à cliente assinar manualmente (baixar, assinar e reenviar).</div>
+    <div class="form-grid">
+      <div class="form-span-2"><label>Nome completo</label><input id="p-nome" value="${textoSeguro(c.nome || '')}"></div>
+      <div><label>CPF</label><input id="p-cpf" value="${textoSeguro(c.documento || '')}" placeholder="000.000.000-00"></div>
+      <div><label>RG</label><input id="p-rg" value="${textoSeguro(c.rg || '')}"></div>
+      <div><label>Órgão emissor</label><input id="p-orgao" value="${textoSeguro(c.orgaoEmissor || 'Instituto de Identificação PC/MG')}"></div>
+      <div><label>Nacionalidade</label><input id="p-nacionalidade" value="${textoSeguro(c.nacionalidade || 'brasileira')}"></div>
+      <div><label>Estado civil</label><input id="p-estado-civil" value="${textoSeguro(c.estadoCivil || '')}" placeholder="Ex.: solteira"></div>
+      <div><label>Profissão</label><input id="p-profissao" value="${textoSeguro(c.profissao || '')}"></div>
+      <div class="form-span-2"><label>Endereço completo</label><textarea id="p-endereco" rows="3" placeholder="Rua, número, complemento, bairro, CEP, cidade e estado">${textoSeguro(c.endereco || '')}</textarea></div>
+      <div><label>E-mail para a ZapSign</label><input id="p-email" type="email" value="${textoSeguro(c.email || '')}"></div>
+      <div><label>Telefone</label><input id="p-telefone" value="${textoSeguro(c.telefone || '')}"></div>
+      <div><label>Local da assinatura</label><input id="p-local" value="${textoSeguro(c.cidade || 'Caratinga')}"></div>
+      <div><label>Data da procuração</label><input id="p-data" type="date" value="${hoje}"></div>
+      <div class="form-span-2"><label>Advogado(a) adicional (opcional — só se o caso exigir mais de uma outorgada)</label><textarea id="p-outorgado-adicional" rows="2" placeholder="Ex.: MARIA DA SILVA, brasileira, solteira, advogada inscrita na OAB/MG sob o nº 000.000, com escritório situado na Rua X, 100, Centro, Cidade/UF, CEP 00.000-000"></textarea></div>
+      <div class="form-span-2"><label>Processo vinculado (opcional)</label><select id="p-processo">${opcoesProcessos()}</select></div>
+    </div>
+    <div id="p-erro" class="erro-inline" style="display:none;"></div>
+    <div class="modal-actions">
+      <button class="btn-secondary" onclick="fecharModal()">Cancelar</button>
+      <button class="btn-primary" id="p-enviar" onclick="gerarProcuracao(${c.id})">Gerar PDF e link para assinatura</button>
+    </div>`;
+  overlay.classList.add('active');
+}
+
+async function gerarProcuracao(clienteId) {
+  const botao = document.getElementById('p-enviar');
+  const erro = document.getElementById('p-erro');
+  botao.disabled = true;
+  botao.textContent = 'Gerando e enviando...';
+  erro.style.display = 'none';
+  try {
+    const resultado = await api(`/api/clientes/${clienteId}/procuracao`, {
+      method: 'POST',
+      body: JSON.stringify({
+        nome: document.getElementById('p-nome').value,
+        cpf: document.getElementById('p-cpf').value,
+        rg: document.getElementById('p-rg').value,
+        orgaoEmissor: document.getElementById('p-orgao').value,
+        nacionalidade: document.getElementById('p-nacionalidade').value,
+        estadoCivil: document.getElementById('p-estado-civil').value,
+        profissao: document.getElementById('p-profissao').value,
+        enderecoCompleto: document.getElementById('p-endereco').value,
+        email: document.getElementById('p-email').value,
+        telefone: document.getElementById('p-telefone').value,
+        localAssinatura: document.getElementById('p-local').value,
+        dataAssinatura: document.getElementById('p-data').value,
+        processoId: Number(document.getElementById('p-processo').value) || null,
+        outorgadoAdicional: document.getElementById('p-outorgado-adicional').value,
+        enviarZapSign: false,
+      }),
+    });
+    await carregarTudo();
+    const d = resultado.documento;
+    const z = resultado.zapsign;
+    modalBox.innerHTML = `
+      <h3>Procuração gerada</h3>
+      <div class="empty-success">O PDF foi criado e registrado na rotina documental.</div>
+      ${resultado.aviso ? `<div class="notice" style="margin-top:14px;">${textoSeguro(resultado.aviso)}</div>` : ''}
+      <p><strong>Drive:</strong> ${d.driveSyncStatus === 'Sincronizado' ? 'salva como 02 - PROCURAÇÃO' : textoSeguro(d.driveSyncStatus || 'pendente')}</p>
+      ${d.driveFileUrl ? '<p>Copie o link abaixo e encaminhe à cliente para baixar, assinar e reenviar.</p>' : '<p>A pasta ainda está sincronizando com o Drive — o link aparece em instantes.</p>'}
+      <div class="modal-actions">
+        <a class="btn-secondary" href="${d.arquivo}" target="_blank" rel="noopener">Abrir PDF</a>
+        ${d.driveFileUrl ? `<button class="btn-primary" onclick="copiarLinkAssinatura('${textoSeguro(d.driveFileUrl)}')">Copiar link para assinatura</button>` : ''}
+        <button class="btn-secondary" onclick="fecharModal()">Fechar</button>
+      </div>`;
+  } catch (e) {
+    erro.textContent = e.message;
+    erro.style.display = 'block';
+    botao.disabled = false;
+    botao.textContent = 'Gerar PDF e link para assinatura';
+  }
 }
 
 function opcoesClientes(selecionado) {
@@ -305,11 +894,12 @@ function abrirModalProcesso(id) {
   const p = id ? state.processos.find((x) => x.id === id) : {};
   modalBox.innerHTML = `
     <h3>${id ? 'Editar' : 'Novo'} Processo</h3>
-    <label>Nome / Número do processo</label><input id="f-nome" value="${p.nome || ''}" />
+    <label>Ação / nome do processo</label><input id="f-nome" value="${p.nome || ''}" />
+    <label>Número CNJ</label><input id="f-numero-processo-cnj" value="${p.numeroProcesso || ''}" placeholder="0000000-00.0000.0.00.0000" />
     <label>Cliente</label><select id="f-cliente"><option value="">— nenhum —</option>${opcoesClientes(p.clienteId)}</select>
     <label>Área</label><select id="f-area">${opcoesLista(AREAS, p.area)}</select>
     <label>Tipo</label><select id="f-tipo">${opcoesLista(TIPOS_PROCESSO, p.tipo)}</select>
-    <label>Status</label><select id="f-status">${opcoesLista(STATUSES, p.status || 'Novo')}</select>
+    <label>Status</label><select id="f-status">${opcoesLista(STATUSES, p.status || 'Triagem')}</select>
     <label>Prazo</label><input type="date" id="f-prazo" value="${p.prazo || ''}" />
     <label><input type="checkbox" id="f-liminar" ${p.liminarDeferida ? 'checked' : ''} style="width:auto;display:inline-block;"/> Liminar deferida</label>
     <div class="modal-actions">
@@ -322,6 +912,7 @@ function abrirModalProcesso(id) {
 async function salvarProcesso(id) {
   const body = {
     nome: document.getElementById('f-nome').value,
+    numeroProcesso: document.getElementById('f-numero-processo-cnj').value,
     clienteId: Number(document.getElementById('f-cliente').value) || null,
     area: document.getElementById('f-area').value,
     tipo: document.getElementById('f-tipo').value,
@@ -388,13 +979,10 @@ async function salvarDocumento() {
   fd.append('processoId', document.getElementById('f-processo').value);
   const arquivo = document.getElementById('f-arquivo').files[0];
   if (arquivo) fd.append('arquivo', arquivo);
-  try {
-    await api('/api/documentos', { method: 'POST', body: fd });
-    fecharModal();
-    await carregarTudo();
-  } catch (e) {
-    alert(e.message);
-  }
+  const res = await fetch('/api/documentos', { method: 'POST', body: fd });
+  if (res.status === 401) { window.location.href = '/login.html'; return; }
+  fecharModal();
+  await carregarTudo();
 }
 
 // ---------- usuários (somente admin) ----------
