@@ -1123,35 +1123,23 @@ app.get('/api/auditoria', requireAdmin, async (req, res) => {
   res.json([...(db.auditoria || [])].sort((a, b) => new Date(b.criadoEm) - new Date(a.criadoEm)).slice(0, 100));
 });
 
-// TEMPORÁRIO: diagnóstico do bug de ids duplicados em eventos — remover depois.
-app.get('/api/debug/eventos', requireAdmin, async (req, res) => {
+// TEMPORÁRIO: conserta os eventos do Calendário que ficaram todos com o mesmo
+// id (bug já corrigido no db.js) — dá a cada um um número único, sem mudar
+// nenhum outro dado, e depois pode ser removida.
+app.post('/api/debug/reparar-eventos-duplicados', requireAdmin, async (req, res) => {
   const db = await load();
-  const dbTemKey = Object.prototype.hasOwnProperty.call(db, 'contadores');
-  const proximoSimulado = nextId(structuredClone(db), 'eventos');
-  res.json({
-    dbTemKeyContadores: dbTemKey,
-    contadores: db.contadores === undefined ? '__UNDEFINED__' : db.contadores,
-    totalEventos: db.eventos.length,
-    maiorNaLista: db.eventos.reduce((m, i) => Math.max(m, Number(i.id) || 0), 0),
-    proximoSimulado,
-    nextIdFonte: nextId.toString(),
-    amostra: db.eventos.slice(0, 5).map((e) => ({ id: e.id, tipoId: typeof e.id, googleEventId: e.googleEventId, criadoEm: e.criadoEm })),
+  const antes = db.eventos.map((e) => e.id);
+  db.eventos.forEach((e, i) => {
+    e.id = i + 1;
   });
-});
-
-// TEMPORÁRIO: mostra o código-fonte real (linhas) do server.js e do db.js que
-// estão rodando neste servidor agora, para achar divergência com o repositório.
-app.get('/api/debug/fonte', requireAdmin, async (req, res) => {
-  const fs = require('fs');
-  const path = require('path');
-  const alvo = String(req.query.termo || 'nextId');
-  function linhasComTermo(caminho) {
-    const conteudo = fs.readFileSync(caminho, 'utf8');
-    return conteudo.split('\n').map((l, i) => ({ n: i + 1, l })).filter((x) => x.l.includes(alvo));
-  }
+  db.contadores = db.contadores || {};
+  db.contadores.eventos = db.eventos.length;
+  await save(db);
   res.json({
-    serverJs: linhasComTermo(path.join(__dirname, 'server.js')),
-    dbJs: linhasComTermo(path.join(__dirname, 'db.js')),
+    totalEventos: db.eventos.length,
+    idsAntes: [...new Set(antes)],
+    idsDepois: db.eventos.map((e) => e.id),
+    contadorEventos: db.contadores.eventos,
   });
 });
 
