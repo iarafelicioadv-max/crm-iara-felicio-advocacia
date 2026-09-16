@@ -26,6 +26,7 @@ const EMPTY_DB = {
   pagamentos: [],
   despesas: [],
   integracoes: {},
+  contadores: {},
 };
 
 let tabelasProntas = null;
@@ -72,8 +73,17 @@ async function save(db) {
   );
 }
 
-function nextId(list) {
-  return list.length ? Math.max(...list.map((i) => i.id)) + 1 : 1;
+// Gera o próximo id de uma coleção sem nunca reaproveitar um id antigo —
+// mesmo que o item de maior id tenha sido excluído nesse meio-tempo, o que
+// antes podia fazer um cadastro novo "herdar" registros órfãos e órfãs
+// (pagamentos, documentos, etc.) que ainda apontavam para aquele número.
+function nextId(db, resource) {
+  db.contadores = db.contadores || {};
+  const lista = db[resource] || [];
+  const maiorNaLista = lista.reduce((m, i) => Math.max(m, Number(i.id) || 0), 0);
+  const proximo = Math.max(maiorNaLista, db.contadores[resource] || 0) + 1;
+  db.contadores[resource] = proximo;
+  return proximo;
 }
 
 async function salvarArquivo(buffer, nomeOriginal, mimetype) {
