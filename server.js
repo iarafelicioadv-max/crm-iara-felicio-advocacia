@@ -295,6 +295,7 @@ app.post('/api/sync/djen', requireSyncKey, async (req, res) => {
       djenId,
       link: r.link || null,
       status: 'Nova',
+      visto: false,
       criadoEm: new Date().toISOString(),
     };
     db.publicacoes.push(publicacao);
@@ -1066,6 +1067,15 @@ app.post('/api/publicacoes', async (req, res) => {
   res.status(201).json(item);
 });
 
+app.post('/api/publicacoes/marcar-vistas', async (req, res) => {
+  const db = await load();
+  (db.publicacoes || []).forEach((p) => {
+    if (p.origem === 'DJEN') p.visto = true;
+  });
+  await save(db);
+  res.json({ ok: true });
+});
+
 app.delete('/api/publicacoes/:id', async (req, res) => {
   const db = await load();
   const idx = (db.publicacoes || []).findIndex((p) => p.id === Number(req.params.id));
@@ -1330,6 +1340,7 @@ app.get('/api/dashboard', async (req, res) => {
     tarefasAmanha: tarefasAbertas.filter((t) => t.prazo === amanhaStr),
     tarefasVencidas: tarefasAbertas.filter((t) => t.prazo && t.prazo < hojeStr),
     publicacoesNovas: (db.publicacoes || []).filter((p) => p.status === 'Nova'),
+    publicacoesDjenNaoVistas: (db.publicacoes || []).filter((p) => p.origem === 'DJEN' && !p.visto).length,
     excecoesCriticas: controladoria.filter((i) => i.risco === 'Crítico').length,
     excecoesTotal: controladoria.length,
     financeiroVencido: financeiro.vencido,
