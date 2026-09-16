@@ -1139,6 +1139,22 @@ app.get('/api/debug/eventos', requireAdmin, async (req, res) => {
   });
 });
 
+// TEMPORÁRIO: mostra o código-fonte real (linhas) do server.js e do db.js que
+// estão rodando neste servidor agora, para achar divergência com o repositório.
+app.get('/api/debug/fonte', requireAdmin, async (req, res) => {
+  const fs = require('fs');
+  const path = require('path');
+  const alvo = String(req.query.termo || 'nextId');
+  function linhasComTermo(caminho) {
+    const conteudo = fs.readFileSync(caminho, 'utf8');
+    return conteudo.split('\n').map((l, i) => ({ n: i + 1, l })).filter((x) => x.l.includes(alvo));
+  }
+  res.json({
+    serverJs: linhasComTermo(path.join(__dirname, 'server.js')),
+    dbJs: linhasComTermo(path.join(__dirname, 'db.js')),
+  });
+});
+
 // Equipe: gera (ou reaproveita) o link de envio de documentos para um cliente
 // (por cliente, não por processo — o processo só é criado depois que a documentação chega)
 app.post('/api/clientes/:id/link-envio', async (req, res) => {
