@@ -1126,10 +1126,15 @@ app.get('/api/auditoria', requireAdmin, async (req, res) => {
 // TEMPORÁRIO: diagnóstico do bug de ids duplicados em eventos — remover depois.
 app.get('/api/debug/eventos', requireAdmin, async (req, res) => {
   const db = await load();
+  const dbTemKey = Object.prototype.hasOwnProperty.call(db, 'contadores');
+  const proximoSimulado = nextId(structuredClone(db), 'eventos');
   res.json({
-    contadores: db.contadores,
+    dbTemKeyContadores: dbTemKey,
+    contadores: db.contadores === undefined ? '__UNDEFINED__' : db.contadores,
     totalEventos: db.eventos.length,
     maiorNaLista: db.eventos.reduce((m, i) => Math.max(m, Number(i.id) || 0), 0),
+    proximoSimulado,
+    nextIdFonte: nextId.toString(),
     amostra: db.eventos.slice(0, 5).map((e) => ({ id: e.id, tipoId: typeof e.id, googleEventId: e.googleEventId, criadoEm: e.criadoEm })),
   });
 });
