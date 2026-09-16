@@ -97,8 +97,15 @@ document.querySelectorAll('.nav-item[data-view]').forEach((btn) => {
     document.querySelectorAll('.view').forEach((v) => v.classList.remove('active'));
     btn.classList.add('active');
     document.getElementById('view-' + btn.dataset.view).classList.add('active');
+    if (btn.dataset.view === 'publicacoes') marcarPublicacoesDjenVistas();
   });
 });
+async function marcarPublicacoesDjenVistas() {
+  const badge = document.getElementById('badge-publicacoes-djen');
+  if (!badge || badge.style.display === 'none') return;
+  await api('/api/publicacoes/marcar-vistas', { method: 'POST' });
+  badge.style.display = 'none';
+}
 
 // ---------- Render ----------
 function renderAll() {
@@ -140,11 +147,28 @@ function renderDashboard() {
     ...(d.tarefasVencidas || []).map((t) => `<div class="alerta"><strong>Prazo vencido:</strong> ${t.titulo} — ${dataBr(t.prazo)}</div>`),
     ...(d.publicacoesNovas || []).map((p) => `<div class="alerta"><strong>Publicação não tratada:</strong> ${p.descricao}</div>`),
   ].join('');
-  const resumo = (itens) => itens.map((t) => `<div class="tarefa-resumo"><strong>${t.titulo}</strong>${t.prazo ? ` · ${dataBr(t.prazo)}` : ''}</div>`).join('') || '<span class="card-label">Nenhuma tarefa.</span>';
-  const hojeEl = document.getElementById('tarefas-hoje');
-  const amanhaEl = document.getElementById('tarefas-amanha');
-  if (hojeEl) hojeEl.innerHTML = resumo(d.tarefasHoje || []);
-  if (amanhaEl) amanhaEl.innerHTML = resumo(d.tarefasAmanha || []);
+
+  const painelPrazos = document.getElementById('painel-proximos-prazos');
+  const listaPrazos = document.getElementById('proximos-prazos-lista');
+  const itensPrazos = [
+    ...(d.tarefasHoje || []).map((t) => ({ ...t, tag: 'Hoje', classe: 'hoje' })),
+    ...(d.tarefasAmanha || []).map((t) => ({ ...t, tag: 'Amanhã', classe: 'amanha' })),
+  ];
+  if (painelPrazos && listaPrazos) {
+    if (!itensPrazos.length) {
+      painelPrazos.style.display = 'none';
+    } else {
+      painelPrazos.style.display = 'block';
+      listaPrazos.innerHTML = itensPrazos.map((t) => `<div class="tarefa-resumo" onclick="editarTarefa(${t.id})"><span><strong>${t.titulo}</strong>${t.processoId ? ` · ${nomeProcesso(t.processoId)}` : ''}</span><span class="tarefa-resumo-tag ${t.classe}">${t.tag}${t.prioridade ? ` · ${t.prioridade}` : ''}</span></div>`).join('');
+    }
+  }
+
+  const badgeDjen = document.getElementById('badge-publicacoes-djen');
+  if (badgeDjen) {
+    const naoVistas = d.publicacoesDjenNaoVistas || 0;
+    badgeDjen.style.display = naoVistas ? 'inline-block' : 'none';
+    badgeDjen.textContent = naoVistas;
+  }
 }
 
 function renderDocumentosNovos(lista) {
@@ -337,6 +361,7 @@ function irParaView(nome) {
   const btn = document.querySelector(`.nav-item[data-view="${nome}"]`);
   if (btn) btn.classList.add('active');
   document.getElementById('view-' + nome).classList.add('active');
+  if (nome === 'publicacoes') marcarPublicacoesDjenVistas();
 }
 
 function solicitarDocumentosCliente(id) {
@@ -523,7 +548,7 @@ function renderTarefas() {
     const aguardando = t.status === 'Aguardando revisão';
     const concluida = t.status === 'Concluída';
     const acao = aguardando ? `<button class="btn-primary btn-small" onclick="revisarTarefa(${t.id})">Revisar</button>` : (!concluida ? `<button class="btn-primary btn-small" onclick="concluirTarefa(${t.id})">Concluir</button>` : '✓');
-    return `<tr><td>${t.titulo}</td><td>${t.processoId ? nomeProcesso(t.processoId) : '—'}</td><td>${dataBr(t.prazo)} ${t.tipoPrazo === 'Fatal' ? '<span class="badge status-Aguardando">fatal</span>' : ''}</td><td>${t.prioridade || 'Média'}</td><td>${t.status || 'A fazer'}</td><td>${t.evidencia || '—'}</td><td>${acao}<button class="btn-icon" onclick="excluir('tarefas', ${t.id})">🗑️</button></td></tr>`;
+    return `<tr><td>${t.titulo}</td><td>${t.processoId ? nomeProcesso(t.processoId) : '—'}</td><td>${dataBr(t.prazo)} ${t.tipoPrazo === 'Fatal' ? '<span class="badge status-Aguardando">fatal</span>' : ''}</td><td>${t.prioridade || 'Média'}</td><td>${t.status || 'A fazer'}</td><td>${t.evidencia || '—'}</td><td>${acao} <button class="btn-secondary btn-small" onclick="editarTarefa(${t.id})">Editar</button><button class="btn-icon" onclick="excluir('tarefas', ${t.id})">🗑️</button></td></tr>`;
   }).join('') || '<tr><td colspan="7">Nenhuma tarefa cadastrada.</td></tr>';
 }
 
@@ -656,6 +681,16 @@ function abrirModalTarefa() {
 }
 async function salvarTarefa() {
   await api('/api/tarefas', { method:'POST', body:JSON.stringify({ titulo:document.getElementById('f-titulo').value, processoId:Number(document.getElementById('f-processo').value)||null, prazo:document.getElementById('f-prazo').value, tipoPrazo:document.getElementById('f-tipo-prazo').value, prioridade:document.getElementById('f-prioridade').value, status:document.getElementById('f-status-tarefa').value, responsavelId:usuarioAtual.id }) });
+  fecharModal(); await carregarTudo();
+}
+function editarTarefa(id) {
+  const t = state.tarefas.find((x) => x.id === id);
+  if (!t) return;
+  modalBox.innerHTML = `<h3>Editar Tarefa</h3><label>Título</label><input id="f-titulo" value="${(t.titulo || '').replace(/"/g, '&quot;')}"><label>Processo</label><select id="f-processo">${opcoesProcessos(t.processoId)}</select><label>Prazo</label><input type="date" id="f-prazo" value="${t.prazo || ''}"><label>Tipo de prazo</label><select id="f-tipo-prazo">${opcoesLista(['Interno', 'Fatal'], t.tipoPrazo || 'Interno')}</select><label>Prioridade</label><select id="f-prioridade">${opcoesLista(['Alta', 'Média', 'Baixa'], t.prioridade || 'Média')}</select><label>Status</label><select id="f-status-tarefa">${opcoesLista(STATUS_TAREFA, t.status || 'A fazer')}</select><label>Observações</label><textarea id="f-observacoes" rows="3">${t.observacoes || ''}</textarea><div class="modal-actions"><button class="btn-secondary" onclick="fecharModal()">Cancelar</button><button class="btn-primary" onclick="salvarEdicaoTarefa(${id})">Salvar</button></div>`;
+  overlay.classList.add('active');
+}
+async function salvarEdicaoTarefa(id) {
+  await api(`/api/tarefas/${id}`, { method:'PUT', body:JSON.stringify({ titulo:document.getElementById('f-titulo').value, processoId:Number(document.getElementById('f-processo').value)||null, prazo:document.getElementById('f-prazo').value || null, tipoPrazo:document.getElementById('f-tipo-prazo').value, prioridade:document.getElementById('f-prioridade').value, status:document.getElementById('f-status-tarefa').value, observacoes:document.getElementById('f-observacoes').value }) });
   fecharModal(); await carregarTudo();
 }
 function concluirTarefa(id) {

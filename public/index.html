@@ -25,7 +25,7 @@
 
       <span class="nav-section-label">Operação jurídica</span>
       <button class="nav-item" data-view="tarefas">✓ Tarefas</button>
-      <button class="nav-item" data-view="publicacoes">📰 Publicações MG</button>
+      <button class="nav-item" data-view="publicacoes">📰 Publicações MG <span id="badge-publicacoes-djen" class="nav-badge" style="display:none;">0</span></button>
       <button class="nav-item" data-view="kanban">🗂 Quadro Kanban</button>
       <button class="nav-item" data-view="processos">📁 Processos</button>
       <button class="nav-item" data-view="calendario">📅 Calendário</button>
@@ -54,13 +54,16 @@
     <section id="view-dashboard" class="view active">
       <h2>Dashboard</h2>
       <div class="cards">
-        <div class="card"><span class="card-label">Total de Casos</span><span class="card-value" id="stat-total">0</span></div>
-        <div class="card"><span class="card-label">Exceções críticas</span><span class="card-value card-value-danger" id="stat-liminares">0</span></div>
-        <div class="card"><span class="card-label">Prazos da Semana</span><span class="card-value" id="stat-prazos">0</span></div>
-        <div class="card"><span class="card-label">Financeiro vencido</span><span class="card-value card-value-danger card-value-money" id="stat-pendentes">R$ 0</span></div>
+        <div class="card card-clickable" onclick="irParaView('processos')" title="Ver todos os processos"><span class="card-label">Total de Casos</span><span class="card-value" id="stat-total">0</span></div>
+        <div class="card card-clickable" onclick="irParaView('controladoria')" title="Ver exceções críticas na Controladoria"><span class="card-label">Exceções críticas</span><span class="card-value card-value-danger" id="stat-liminares">0</span></div>
+        <div class="card card-clickable" onclick="irParaView('calendario')" title="Ver compromissos dos próximos 7 dias no Calendário"><span class="card-label">Prazos da Semana</span><span class="card-value" id="stat-prazos">0</span></div>
+        <div class="card card-clickable" onclick="irParaView('financeiro')" title="Ver recebimentos vencidos no Financeiro"><span class="card-label">Financeiro vencido</span><span class="card-value card-value-danger card-value-money" id="stat-pendentes">R$ 0</span></div>
       </div>
       <div id="alertas-dashboard" class="alertas-dashboard"></div>
-      <div class="hoje-grid"><div class="panel"><h3>Tarefas de hoje</h3><div id="tarefas-hoje"></div></div><div class="panel"><h3>Para amanhã</h3><div id="tarefas-amanha"></div></div></div>
+      <div class="panel" id="painel-proximos-prazos" style="display:none;">
+        <h3>Próximos prazos (hoje e amanhã)</h3>
+        <div id="proximos-prazos-lista"></div>
+      </div>
       <div class="panel" id="painel-documentos-novos" style="display:none;">
         <div class="view-header">
           <h3 style="margin:0;">🔔 Novos Documentos Recebidos</h3>
