@@ -45,7 +45,7 @@ async function ensureAdminSeed() {
     const email = process.env.ADMIN_EMAIL || 'iarafelicio.adv@gmail.com';
     const senhaInicial = process.env.ADMIN_INITIAL_PASSWORD || crypto.randomBytes(6).toString('hex');
     const admin = {
-      id: nextId(db.usuarios),
+      id: nextId(db, 'usuarios'),
       nome: 'Iara Vieira Felício',
       email,
       role: 'admin',
@@ -75,7 +75,7 @@ function auditar(req, db, acao, recurso, item, detalhes) {
   if (!db.auditoria) db.auditoria = [];
   const usuario = (db.usuarios || []).find((u) => u.id === req.session.userId);
   db.auditoria.push({
-    id: nextId(db.auditoria),
+    id: nextId(db, 'auditoria'),
     usuarioId: req.session.userId || null,
     usuarioNome: usuario ? usuario.nome : 'Sistema',
     acao,
@@ -214,7 +214,7 @@ app.post('/api/sync/clientes-processos', requireSyncKey, async (req, res) => {
     if (!r.cliente) return;
     let cliente = db.clientes.find((c) => c.nome && c.nome.trim().toLowerCase() === String(r.cliente).trim().toLowerCase());
     if (!cliente) {
-      cliente = { id: nextId(db.clientes), nome: r.cliente, criadoEm: new Date().toISOString() };
+      cliente = { id: nextId(db, 'clientes'), nome: r.cliente, criadoEm: new Date().toISOString() };
       db.clientes.push(cliente);
       clientesCriados++;
     } else {
@@ -237,7 +237,7 @@ app.post('/api/sync/clientes-processos', requireSyncKey, async (req, res) => {
       };
 
       if (!processo) {
-        processo = { id: nextId(db.processos), criadoEm: new Date().toISOString(), ...dadosProcesso };
+        processo = { id: nextId(db, 'processos'), criadoEm: new Date().toISOString(), ...dadosProcesso };
         db.processos.push(processo);
         processosCriados++;
       } else {
@@ -249,6 +249,56 @@ app.post('/api/sync/clientes-processos', requireSyncKey, async (req, res) => {
 
   await save(db);
   res.json({ clientesCriados, clientesAtualizados, processosCriados, processosAtualizados });
+});
+
+// Sincronização das publicações do DJEN (Diário de Justiça Eletrônico
+// Nacional), buscadas pelo Apps Script na API pública do CNJ e enviadas aqui.
+// Concilia com o processo pelo número CNJ (mesma lógica usada no cadastro
+// manual de publicações) e nunca duplica, pois cada publicação do DJEN tem um
+// id próprio (djenId) que é conferido antes de criar o registro.
+app.post('/api/sync/djen', requireSyncKey, async (req, res) => {
+  const db = await load();
+  db.publicacoes = db.publicacoes || [];
+  const registros = Array.isArray(req.body.registros) ? req.body.registros : [];
+  let criadas = 0;
+  let ignoradas = 0;
+
+  registros.forEach((r) => {
+    const djenId = r.id != null ? String(r.id) : null;
+    if (!djenId || db.publicacoes.some((p) => p.djenId === djenId)) {
+      ignoradas++;
+      return;
+    }
+
+    const numeroProcesso = String(r.numeroProcesso || '').trim() || null;
+    const normalizado = numeroProcesso ? numeroProcesso.replace(/\D/g, '') : null;
+    const processo = normalizado
+      ? db.processos.find((p) => String(p.numeroNormalizado || p.numeroProcesso || p.nome || '').replace(/\D/g, '') === normalizado)
+      : null;
+
+    const resumo = [r.tipoComunicacao, r.tipoDocumento, r.nomeOrgao].filter(Boolean).join(' — ');
+    const descricao = `${resumo ? `${resumo}: ` : ''}${String(r.texto || '').slice(0, 500)}`.trim() || 'Publicação DJEN';
+
+    db.publicacoes.push({
+      id: nextId(db, 'publicacoes'),
+      processoId: processo ? processo.id : null,
+      numeroProcesso,
+      numeroNormalizado: normalizado,
+      descricao,
+      dataPublicacao: r.dataDisponibilizacao || null,
+      prazoFatal: null,
+      tribunal: r.tribunal || 'DJEN/CNJ',
+      origem: 'DJEN',
+      djenId,
+      link: r.link || null,
+      status: 'Nova',
+      criadoEm: new Date().toISOString(),
+    });
+    criadas++;
+  });
+
+  await save(db);
+  res.json({ criadas, ignoradas, total: registros.length });
 });
 
 app.post('/api/sync/documento', requireSyncKey, async (req, res) => {
@@ -272,7 +322,7 @@ app.post('/api/sync/documento', requireSyncKey, async (req, res) => {
   const idArquivo = await salvarArquivo(buffer, nomeOriginal, mimetype);
 
   const item = {
-    id: nextId(db.documentos),
+    id: nextId(db, 'documentos'),
     nome: nomeOriginal,
     clienteId: processo.clienteId,
     processoId: processo.id,
@@ -307,7 +357,7 @@ app.post('/api/sync/calendario', requireSyncKey, async (req, res) => {
       origem: 'google-agenda',
     };
     if (!evento) {
-      evento = { id: nextId(db.eventos), criadoEm: new Date().toISOString(), ...dados };
+      evento = { id: nextId(db, 'eventos'), criadoEm: new Date().toISOString(), ...dados };
       db.eventos.push(evento);
       criados++;
     } else {
@@ -445,7 +495,7 @@ app.post('/api/publico/rotina/:token/upload', uploadRotina.any(), async (req, re
     const item = ITEM_POR_CODIGO[codigo];
     const idArquivo = await salvarArquivo(file.buffer, file.originalname, file.mimetype);
     const doc = {
-      id: nextId(db.documentos),
+      id: nextId(db, 'documentos'),
       nome: item.rotulo,
       clienteId: cliente.id,
       processoId: null,
@@ -501,7 +551,7 @@ app.post('/api/integracoes/zapsign/webhook', async (req, res) => {
   if (resultado.aplicado) {
     if (!db.auditoria) db.auditoria = [];
     db.auditoria.push({
-      id: nextId(db.auditoria), usuarioId: null, usuarioNome: 'ZapSign', acao: 'atualizou assinatura',
+      id: nextId(db, 'auditoria'), usuarioId: null, usuarioNome: 'ZapSign', acao: 'atualizou assinatura',
       recurso: resultado.recurso, recursoId: resultado.item.id,
       detalhes: `${resultado.evento.evento}: ${resultado.evento.status || 'sem status'}`,
       criadoEm: new Date().toISOString(),
@@ -590,7 +640,7 @@ app.post('/api/clientes/:id/procuracao', async (req, res) => {
   const nomeOriginal = `PROCURAÇÃO - ${dados.nome}.pdf`;
   const arquivoId = await salvarArquivo(pdf, nomeOriginal, 'application/pdf');
   const documento = {
-    id: nextId(db.documentos),
+    id: nextId(db, 'documentos'),
     nome: 'PROCURAÇÃO',
     clienteId: cliente.id,
     processoId: req.body.processoId ? Number(req.body.processoId) : null,
@@ -765,7 +815,7 @@ app.post('/api/usuarios', requireAdmin, async (req, res) => {
     return res.status(400).json({ erro: 'já existe um usuário com esse e-mail' });
   }
   const novo = {
-    id: nextId(db.usuarios),
+    id: nextId(db, 'usuarios'),
     nome,
     email,
     role: role === 'admin' ? 'admin' : 'membro',
@@ -810,7 +860,7 @@ function crud(resource) {
 
   app.post(base, async (req, res) => {
     const db = await load();
-    let item = { id: nextId(db[resource]), criadoEm: new Date().toISOString(), ...req.body };
+    let item = { id: nextId(db, resource), criadoEm: new Date().toISOString(), ...req.body };
     if (resource === 'clientes' && !String(item.nome || '').trim()) return res.status(400).json({ erro: 'nome do cliente é obrigatório' });
     if (resource === 'clientes') {
       const documentoNormalizado = String(item.documento || '').replace(/\D/g, '');
@@ -974,7 +1024,7 @@ app.post('/api/publicacoes', async (req, res) => {
     if (encontrado) processoId = encontrado.id;
   }
   const item = {
-    id: nextId(db.publicacoes), processoId: processoId ? Number(processoId) : null,
+    id: nextId(db, 'publicacoes'), processoId: processoId ? Number(processoId) : null,
     numeroProcesso: String(numeroProcesso || '').trim() || null,
     numeroNormalizado: String(numeroProcesso || '').replace(/\D/g, '') || null,
     descricao, dataPublicacao, prazoFatal: prazoFatal || null,
@@ -993,7 +1043,7 @@ app.post('/api/publicacoes/:id/criar-tarefa', async (req, res) => {
   if (!publicacao.processoId) return res.status(400).json({ erro: 'vincule a publicação a um processo antes de criar a tarefa' });
   const processo = (db.processos || []).find((p) => p.id === publicacao.processoId);
   const tarefa = {
-    id: nextId(db.tarefas), titulo: `Providenciar: ${publicacao.descricao}`, processoId: publicacao.processoId,
+    id: nextId(db, 'tarefas'), titulo: `Providenciar: ${publicacao.descricao}`, processoId: publicacao.processoId,
     responsavelId: req.body.responsavelId ? Number(req.body.responsavelId) : req.session.userId,
     prazo: publicacao.prazoFatal, tipoPrazo: publicacao.prazoFatal ? 'Fatal' : 'Interno',
     prioridade: publicacao.prazoFatal ? 'Alta' : 'Média', status: 'A fazer',
@@ -1116,7 +1166,7 @@ app.post('/api/documentos', upload.single('arquivo'), async (req, res) => {
     nomeOriginal = req.file.originalname;
   }
   const item = {
-    id: nextId(db.documentos),
+    id: nextId(db, 'documentos'),
     nome: req.body.nome || nomeOriginal || 'Documento',
     clienteId: req.body.clienteId ? Number(req.body.clienteId) : null,
     processoId: req.body.processoId ? Number(req.body.processoId) : null,
