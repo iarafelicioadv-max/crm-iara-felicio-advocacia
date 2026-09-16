@@ -530,7 +530,7 @@ function renderTarefas() {
 function renderPublicacoes() {
   const tbody = document.querySelector('#tabela-publicacoes tbody');
   if (!tbody) return;
-  tbody.innerHTML = state.publicacoes.map((p) => `<tr><td>${dataBr(p.dataPublicacao)}</td><td>${p.processoId ? nomeProcesso(p.processoId) : `<span class="badge risco-critico">Não conciliado${p.numeroProcesso ? ` · ${p.numeroProcesso}` : ''}</span>`}</td><td>${p.descricao}</td><td>${dataBr(p.prazoFatal)}</td><td>${p.status}</td><td>${p.status === 'Nova' && p.processoId ? `<button class="btn-primary btn-small" onclick="criarTarefaPublicacao(${p.id})">Criar tarefa</button>` : (p.status === 'Nova' ? 'Vincule o processo' : '✓')}</td></tr>`).join('') || '<tr><td colspan="6">Nenhuma publicação registrada.</td></tr>';
+  tbody.innerHTML = state.publicacoes.map((p) => `<tr><td>${dataBr(p.dataPublicacao)}</td><td>${p.processoId ? nomeProcesso(p.processoId) : `<span class="badge risco-critico">Não conciliado${p.numeroProcesso ? ` · ${p.numeroProcesso}` : ''}</span>`}</td><td>${p.origem === 'DJEN' ? '<span class="badge risco-baixo">DJEN</span> ' : ''}${p.descricao}${p.link ? ` <a href="${p.link}" target="_blank" rel="noopener">(ver publicação)</a>` : ''}</td><td>${dataBr(p.prazoFatal)}</td><td>${p.status}</td><td>${p.status === 'Nova' && p.processoId ? `<button class="btn-primary btn-small" onclick="criarTarefaPublicacao(${p.id})">Criar tarefa</button>` : (p.status === 'Nova' ? 'Vincule o processo' : '✓')}</td></tr>`).join('') || '<tr><td colspan="6">Nenhuma publicação registrada.</td></tr>';
 }
 
 function renderControladoria() {
