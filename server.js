@@ -1066,6 +1066,16 @@ app.post('/api/publicacoes', async (req, res) => {
   res.status(201).json(item);
 });
 
+app.delete('/api/publicacoes/:id', async (req, res) => {
+  const db = await load();
+  const idx = (db.publicacoes || []).findIndex((p) => p.id === Number(req.params.id));
+  if (idx === -1) return res.status(404).json({ erro: 'publicação não encontrada' });
+  const [removida] = db.publicacoes.splice(idx, 1);
+  auditar(req, db, 'excluiu', 'publicação', removida, removida.descricao);
+  await save(db);
+  res.json({ ok: true });
+});
+
 app.post('/api/publicacoes/:id/criar-tarefa', async (req, res) => {
   const db = await load();
   const publicacao = (db.publicacoes || []).find((p) => p.id === Number(req.params.id));
