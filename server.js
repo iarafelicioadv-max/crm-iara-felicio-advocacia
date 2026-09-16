@@ -397,10 +397,20 @@ app.post('/api/sync/calendario', requireSyncKey, async (req, res) => {
   });
 
   // remove da lista os eventos vindos da Agenda que não vieram mais nesta sincronização
-  // (ou seja, foram apagados/cancelados no Google Agenda) — só afeta eventos com origem google-agenda.
+  // (ou seja, foram apagados/cancelados no Google Agenda) — só afeta eventos com origem
+  // google-agenda, e só dentro da janela de datas efetivamente sincronizada (janelaInicio/
+  // janelaFim): um evento antigo fora dessa janela nunca é apagado só por não constar no
+  // lote atual, já que a sincronização normalmente não busca a agenda inteira, e sim uma
+  // janela de dias (passado recente + futuro).
   if (req.body.idsAtuais && Array.isArray(req.body.idsAtuais)) {
     const idsAtuais = new Set(req.body.idsAtuais);
-    db.eventos = db.eventos.filter((ev) => ev.origem !== 'google-agenda' || idsAtuais.has(ev.googleEventId));
+    const { janelaInicio, janelaFim } = req.body;
+    db.eventos = db.eventos.filter((ev) => {
+      if (ev.origem !== 'google-agenda') return true;
+      if (idsAtuais.has(ev.googleEventId)) return true;
+      if (janelaInicio && janelaFim && ev.data && (ev.data < janelaInicio || ev.data > janelaFim)) return true;
+      return false;
+    });
   }
 
   await save(db);
