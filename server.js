@@ -1123,6 +1123,17 @@ app.get('/api/auditoria', requireAdmin, async (req, res) => {
   res.json([...(db.auditoria || [])].sort((a, b) => new Date(b.criadoEm) - new Date(a.criadoEm)).slice(0, 100));
 });
 
+// TEMPORÁRIO: diagnóstico do bug de ids duplicados em eventos — remover depois.
+app.get('/api/debug/eventos', requireAdmin, async (req, res) => {
+  const db = await load();
+  res.json({
+    contadores: db.contadores,
+    totalEventos: db.eventos.length,
+    maiorNaLista: db.eventos.reduce((m, i) => Math.max(m, Number(i.id) || 0), 0),
+    amostra: db.eventos.slice(0, 5).map((e) => ({ id: e.id, tipoId: typeof e.id, googleEventId: e.googleEventId, criadoEm: e.criadoEm })),
+  });
+});
+
 // Equipe: gera (ou reaproveita) o link de envio de documentos para um cliente
 // (por cliente, não por processo — o processo só é criado depois que a documentação chega)
 app.post('/api/clientes/:id/link-envio', async (req, res) => {
