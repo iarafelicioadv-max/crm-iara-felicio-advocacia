@@ -259,9 +259,12 @@ app.post('/api/sync/clientes-processos', requireSyncKey, async (req, res) => {
 app.post('/api/sync/djen', requireSyncKey, async (req, res) => {
   const db = await load();
   db.publicacoes = db.publicacoes || [];
+  db.tarefas = db.tarefas || [];
   const registros = Array.isArray(req.body.registros) ? req.body.registros : [];
+  const responsavelPadrao = (db.usuarios || []).find((u) => u.role === 'admin');
   let criadas = 0;
   let ignoradas = 0;
+  let tarefasCriadas = 0;
 
   registros.forEach((r) => {
     const djenId = r.id != null ? String(r.id) : null;
@@ -279,7 +282,7 @@ app.post('/api/sync/djen', requireSyncKey, async (req, res) => {
     const resumo = [r.tipoComunicacao, r.tipoDocumento, r.nomeOrgao].filter(Boolean).join(' — ');
     const descricao = `${resumo ? `${resumo}: ` : ''}${String(r.texto || '').slice(0, 500)}`.trim() || 'Publicação DJEN';
 
-    db.publicacoes.push({
+    const publicacao = {
       id: nextId(db, 'publicacoes'),
       processoId: processo ? processo.id : null,
       numeroProcesso,
@@ -293,12 +296,38 @@ app.post('/api/sync/djen', requireSyncKey, async (req, res) => {
       link: r.link || null,
       status: 'Nova',
       criadoEm: new Date().toISOString(),
-    });
+    };
+    db.publicacoes.push(publicacao);
     criadas++;
+
+    // Publicação já conciliada com um processo: cria a tarefa de acompanhamento
+    // automaticamente. O prazo fatal fica em aberto de propósito — a API do
+    // DJEN não informa o tipo de prazo processual do ato (varia conforme o
+    // caso), então calculá-lo sozinho arriscaria um prazo errado. A tarefa
+    // nasce como lembrete para a advogada abrir e definir o prazo certo.
+    if (processo) {
+      const tarefa = {
+        id: nextId(db, 'tarefas'),
+        titulo: `Providenciar: ${publicacao.descricao}`.slice(0, 300),
+        processoId: processo.id,
+        responsavelId: responsavelPadrao ? responsavelPadrao.id : null,
+        prazo: null,
+        tipoPrazo: 'Interno',
+        prioridade: 'Média',
+        status: 'A fazer',
+        origem: 'DJEN',
+        observacoes: `Publicação DJEN automática em ${publicacao.dataPublicacao || ''}. IMPORTANTE: verifique o tipo do ato e defina o prazo fatal manualmente. Processo: ${processo.nome}`,
+        criadoEm: new Date().toISOString(),
+      };
+      db.tarefas.push(tarefa);
+      publicacao.status = 'Tratada';
+      publicacao.tarefaId = tarefa.id;
+      tarefasCriadas++;
+    }
   });
 
   await save(db);
-  res.json({ criadas, ignoradas, total: registros.length });
+  res.json({ criadas, ignoradas, tarefasCriadas, total: registros.length });
 });
 
 app.post('/api/sync/documento', requireSyncKey, async (req, res) => {
@@ -970,6 +999,7 @@ function calcularControladoria(db) {
   (db.tarefas || []).forEach((t) => {
     if (t.status !== 'Concluída' && t.prazo && t.prazo < hoje) adicionar('Prazo', 'Crítico', `Tarefa vencida: ${t.titulo}`, 'Revisar o prazo, executar e registrar evidência.', t.id, 'Tarefas', `Prazo cadastrado: ${t.prazo}`);
     if (t.status === 'Concluída' && !String(t.evidencia || '').trim()) adicionar('Evidência', 'Alto', `Conclusão sem evidência: ${t.titulo}`, 'Anexar ou descrever a evidência da conclusão.', t.id, 'Tarefas', 'Status concluído sem comprovação');
+    if (t.origem === 'DJEN' && t.status !== 'Concluída' && !t.prazo) adicionar('Prazo', 'Crítico', `Defina o prazo fatal: ${t.titulo}`, 'Verifique o tipo do ato na publicação do DJEN e informe o prazo fatal correto nesta tarefa.', t.id, 'Tarefas', 'Tarefa criada automaticamente pela sincronização do DJEN, ainda sem prazo definido');
   });
 
   (db.publicacoes || []).forEach((p) => {
