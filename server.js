@@ -1123,26 +1123,6 @@ app.get('/api/auditoria', requireAdmin, async (req, res) => {
   res.json([...(db.auditoria || [])].sort((a, b) => new Date(b.criadoEm) - new Date(a.criadoEm)).slice(0, 100));
 });
 
-// TEMPORÁRIO: conserta os eventos do Calendário que ficaram todos com o mesmo
-// id (bug já corrigido no db.js) — dá a cada um um número único, sem mudar
-// nenhum outro dado, e depois pode ser removida.
-app.post('/api/debug/reparar-eventos-duplicados', requireAdmin, async (req, res) => {
-  const db = await load();
-  const antes = db.eventos.map((e) => e.id);
-  db.eventos.forEach((e, i) => {
-    e.id = i + 1;
-  });
-  db.contadores = db.contadores || {};
-  db.contadores.eventos = db.eventos.length;
-  await save(db);
-  res.json({
-    totalEventos: db.eventos.length,
-    idsAntes: [...new Set(antes)],
-    idsDepois: db.eventos.map((e) => e.id),
-    contadorEventos: db.contadores.eventos,
-  });
-});
-
 // Equipe: gera (ou reaproveita) o link de envio de documentos para um cliente
 // (por cliente, não por processo — o processo só é criado depois que a documentação chega)
 app.post('/api/clientes/:id/link-envio', async (req, res) => {
