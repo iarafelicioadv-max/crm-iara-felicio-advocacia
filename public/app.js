@@ -571,9 +571,6 @@ function renderControladoria() {
 function renderFinanceiro() {
   const f = state.financeiro || {};
   const z = state.zapsign || {};
-  document.getElementById('fin-contratado').textContent = moeda(f.totalContratado);
-  document.getElementById('fin-taxas').textContent = moeda(f.totalTaxasCartao);
-  document.getElementById('fin-liquido').textContent = moeda(f.totalLiquidoPrevisto);
   document.getElementById('fin-recebido').textContent = moeda(f.totalRecebido);
   document.getElementById('fin-receber').textContent = moeda(f.aReceber);
   document.getElementById('fin-apagar').textContent = moeda(f.totalAPagar);
@@ -595,7 +592,6 @@ function renderFinanceiro() {
   renderContasAPagar();
   renderExtratoGeral();
 
-  const elDesp = document.getElementById('fin-despesas'); if (elDesp) elDesp.textContent = moeda(f.totalDespesas);
   document.getElementById('fin-saldo-geral').textContent = moeda(f.saldoGeral);
 
   const mesBr = (mes) => {

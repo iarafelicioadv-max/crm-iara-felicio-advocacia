@@ -167,7 +167,7 @@ h3 { font-family: 'Playfair Display', serif; font-size: 18px; margin: 0 0 16px; 
 .badge.risco-medio { background: #fef0c7; color: #93370d; }
 .badge.risco-baixo { background: #dcfae6; color: #067647; }
 .projection-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin: 0 0 20px; }
-.cards-financeiro { grid-template-columns: repeat(3, 1fr); }
+.cards-financeiro { grid-template-columns: repeat(4, 1fr); }
 .projection-grid .panel { display: flex; flex-direction: column; gap: 8px; }
 .projection-grid strong { color: var(--bordo); font: 600 23px 'Playfair Display', serif; }
 .empty-success { color: #067647; background: #ecfdf3; padding: 16px; border-radius: 8px; }
