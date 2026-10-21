@@ -49,3 +49,26 @@ assert.strictEqual(comPagamento.contratos[0].repassesRecebidos, 1);
 assert.strictEqual(comPagamento.contratos[0].proximoVencimento, null);
 
 console.log('OK: parcelamento da cliente separado do repasse líquido do cartão.');
+
+// ---- Contas a pagar e extrato geral ----
+const { calcularFinanceiro: calc } = require('../financeiro');
+const dbDesp = {
+  contratos: [], clientes: [],
+  pagamentos: [{ id: 1, data: '2026-10-05', valor: 1000, descricao: 'Honorários' }],
+  despesas: [
+    { id: 1, data: '2026-10-02', categoria: 'Aluguel', descricao: 'Aluguel', valor: 300 },
+    { id: 2, data: '2026-10-10', categoria: 'Software', descricao: 'Sistema', valor: 100, status: 'Pendente' },
+    { id: 3, data: '2026-10-25', categoria: 'Internet', descricao: 'Internet', valor: 50, status: 'Pendente' },
+    { id: 4, data: '2026-12-01', categoria: 'Contador', descricao: 'Contador', valor: 200, status: 'Pendente' },
+  ],
+};
+const r = calc(dbDesp, '2026-10-21');
+assert.strictEqual(r.totalDespesas, 300, 'pendentes não entram nas despesas pagas');
+assert.strictEqual(r.saldoGeral, 700);
+assert.strictEqual(r.totalAPagar, 350);
+assert.strictEqual(r.totalAPagarVencido, 100);
+assert.strictEqual(r.totalAPagar7dias, 50);
+assert.deepStrictEqual(r.contasAPagar.map((c) => c.situacao), ['Vencida', 'Vence em breve', 'A vencer']);
+assert.strictEqual(r.extratoGeral.length, 2);
+assert.strictEqual(r.extratoGeral[0].saldoAcumulado, 700);
+console.log('OK: contas a pagar, extrato geral e saldo.');

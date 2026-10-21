@@ -6,7 +6,7 @@ const bcrypt = require('bcryptjs');
 const cookieSession = require('cookie-session');
 const { load, save, nextId, salvarArquivo, buscarArquivo, removerArquivo } = require('./db');
 const { configuracaoDriveValida, criarDrivePeloAmbiente } = require('./google-drive');
-const { calcularFinanceiro, normalizarContrato } = require('./financeiro');
+const { calcularFinanceiro, normalizarContrato, adicionarMes } = require('./financeiro');
 const { aplicarEventoZapSign, segredoValido, confirmarEventoZapSignPorApi, criarProcuracaoZapSign } = require('./zapsign');
 const { gerarPdfProcuracao, normalizarDadosProcuracao, validarDadosProcuracao } = require('./procuracao');
 const {
@@ -961,6 +961,27 @@ function crud(resource) {
 }
 
 ['clientes', 'processos', 'eventos', 'leads', 'tarefas', 'contratos', 'pagamentos', 'despesas'].forEach(crud);
+
+// Marca uma conta a pagar como paga. Se for gasto fixo, já deixa a do mês seguinte pendente.
+app.post('/api/despesas/:id/pagar', async (req, res) => {
+  const db = await load();
+  const despesa = (db.despesas || []).find((d) => d.id === Number(req.params.id));
+  if (!despesa) return res.status(404).json({ erro: 'não encontrado' });
+  if (despesa.status !== 'Pendente') return res.status(400).json({ erro: 'esta conta já está paga' });
+  const dataPagamento = /^\d{4}-\d{2}-\d{2}$/.test(String(req.body.data || '')) ? req.body.data : new Date().toISOString().slice(0, 10);
+  despesa.status = 'Pago';
+  despesa.dataPagamento = dataPagamento;
+  if (despesa.fixo && !despesa.proximaGerada) {
+    const proxima = adicionarMes(despesa.data, 1);
+    if (proxima) {
+      db.despesas.push({ id: nextId(db, 'despesas'), categoria: despesa.categoria, descricao: despesa.descricao, valor: despesa.valor, data: proxima, fixo: true, status: 'Pendente' });
+      despesa.proximaGerada = true;
+    }
+  }
+  auditar(req, db, 'pagou', 'despesas', despesa, despesa.descricao || despesa.categoria || '');
+  await save(db);
+  res.json(despesa);
+});
 
 app.post('/api/tarefas/:id/concluir', async (req, res) => {
   const db = await load();

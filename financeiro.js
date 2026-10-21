@@ -126,6 +126,14 @@ function montarExtrato(db) {
     .sort((a, b) => String(b.data || '').localeCompare(String(a.data || '')) || (b.id - a.id));
 }
 
+function despesaPaga(d) {
+  return d.status !== 'Pendente';
+}
+
+function dataEfetivaDespesa(d) {
+  return d.dataPagamento || d.data || null;
+}
+
 function montarDespesas(db) {
   const despesas = db.despesas || [];
   return [...despesas]
@@ -136,8 +144,54 @@ function montarDespesas(db) {
       descricao: d.descricao || '',
       valor: numero(d.valor),
       fixo: !!d.fixo,
+      status: despesaPaga(d) ? 'Pago' : 'Pendente',
+      dataPagamento: d.dataPagamento || null,
     }))
     .sort((a, b) => String(b.data || '').localeCompare(String(a.data || '')) || (b.id - a.id));
+}
+
+function montarContasAPagar(db, hoje) {
+  const limite = new Date(`${hoje}T12:00:00Z`);
+  limite.setUTCDate(limite.getUTCDate() + 7);
+  const limite7 = limite.toISOString().slice(0, 10);
+  return (db.despesas || [])
+    .filter((d) => !despesaPaga(d))
+    .map((d) => {
+      const vencimento = d.data || null;
+      const situacao = vencimento && vencimento < hoje ? 'Vencida' : (vencimento && vencimento <= limite7 ? 'Vence em breve' : 'A vencer');
+      return { id: d.id, vencimento, categoria: d.categoria || 'Outro', descricao: d.descricao || '', valor: numero(d.valor), fixo: !!d.fixo, situacao };
+    })
+    .sort((a, b) => String(a.vencimento || '9999').localeCompare(String(b.vencimento || '9999')) || (a.id - b.id));
+}
+
+// Extrato único: receitas (recebimentos) e despesas pagas, com saldo acumulado.
+function montarExtratoGeral(db) {
+  const contratos = db.contratos || [];
+  const clientes = db.clientes || [];
+  const nomeCliente = (id) => (clientes.find((c) => c.id === id) || {}).nome || null;
+  const movimentos = [];
+  (db.pagamentos || []).forEach((p) => {
+    const contrato = contratos.find((c) => c.id === p.contratoId) || null;
+    movimentos.push({
+      tipo: 'Receita', recurso: 'pagamentos', id: p.id, data: p.data || null, valor: numero(p.valor),
+      categoria: 'Honorários',
+      descricao: p.descricao || (contrato ? contrato.descricao : 'Recebimento avulso'),
+      detalhe: contrato ? (nomeCliente(contrato.clienteId) || 'Cliente não identificado') : 'Sem contrato vinculado',
+    });
+  });
+  (db.despesas || []).filter(despesaPaga).forEach((d) => {
+    movimentos.push({
+      tipo: 'Despesa', recurso: 'despesas', id: d.id, data: dataEfetivaDespesa(d), valor: numero(d.valor),
+      categoria: d.categoria || 'Outro', descricao: d.descricao || '', detalhe: d.fixo ? 'Fixa' : 'Avulsa',
+    });
+  });
+  const cronologico = movimentos.sort((a, b) => String(a.data || '').localeCompare(String(b.data || '')) || (a.tipo === b.tipo ? a.id - b.id : (a.tipo === 'Receita' ? -1 : 1)));
+  let saldo = 0;
+  cronologico.forEach((m) => {
+    saldo += m.tipo === 'Receita' ? m.valor : -m.valor;
+    m.saldoAcumulado = Number(saldo.toFixed(2));
+  });
+  return cronologico.reverse();
 }
 
 function montarResumoMensal(db) {
@@ -150,8 +204,8 @@ function montarResumoMensal(db) {
     const mes = mesDe(p.data);
     if (mes) linha(mes).recebido += numero(p.valor);
   });
-  despesas.forEach((d) => {
-    const mes = mesDe(d.data);
+  despesas.filter(despesaPaga).forEach((d) => {
+    const mes = mesDe(dataEfetivaDespesa(d));
     if (mes) linha(mes).gasto += numero(d.valor);
   });
   return Object.values(meses)
@@ -163,6 +217,8 @@ function calcularFinanceiro(db, hoje = new Date().toISOString().slice(0, 10)) {
   const contratos = db.contratos || [];
   const pagamentos = db.pagamentos || [];
   const contratosDetalhados = contratos.map((c) => detalharContrato(c, pagamentos, hoje));
+  const despesasPagas = (db.despesas || []).filter(despesaPaga);
+  const contasAPagar = montarContasAPagar(db, hoje);
   const ativos = contratosDetalhados.filter((c) => c.status !== 'Cancelado');
   const repassesAtivos = ativos.flatMap((c) => c.repasses);
   const totalContratado = ativos.reduce((s, c) => s + numero(c.valorTotal), 0);
@@ -185,6 +241,7 @@ function calcularFinanceiro(db, hoje = new Date().toISOString().slice(0, 10)) {
     totalRecebidoConciliado: pagamentos.filter((p) => p.contratoId && contratos.some((c) => c.id === p.contratoId)).reduce((s, p) => s + numero(p.valor), 0),
     aReceber: ativos.reduce((s, c) => s + c.saldo, 0),
     vencido: ativos.reduce((s, c) => s + c.valorVencido, 0),
+    repassesAtrasados: ativos.flatMap((c) => c.repasses.filter((p) => p.situacao === 'Atrasado').map((p) => ({ contratoId: c.id, clienteId: c.clienteId, descricao: c.descricao, numero: p.numero, vencimento: p.vencimento, valor: p.valorAberto }))).sort((a, b) => String(a.vencimento).localeCompare(String(b.vencimento))),
     projecao30: projetar(30),
     projecao60: projetar(60),
     projecao90: projetar(90),
@@ -192,10 +249,15 @@ function calcularFinanceiro(db, hoje = new Date().toISOString().slice(0, 10)) {
     pagamentosSemContrato: pagamentos.filter((p) => !p.contratoId),
     extrato: montarExtrato(db),
     despesas: montarDespesas(db),
-    totalDespesas: (db.despesas || []).reduce((s, d) => s + numero(d.valor), 0),
-    saldoGeral: Number((pagamentos.reduce((s, p) => s + numero(p.valor), 0) - (db.despesas || []).reduce((s, d) => s + numero(d.valor), 0)).toFixed(2)),
+    contasAPagar,
+    totalAPagar: contasAPagar.reduce((s, c) => s + c.valor, 0),
+    totalAPagarVencido: contasAPagar.filter((c) => c.situacao === 'Vencida').reduce((s, c) => s + c.valor, 0),
+    totalAPagar7dias: contasAPagar.filter((c) => c.situacao === 'Vence em breve').reduce((s, c) => s + c.valor, 0),
+    extratoGeral: montarExtratoGeral(db),
+    totalDespesas: despesasPagas.reduce((s, d) => s + numero(d.valor), 0),
+    saldoGeral: Number((pagamentos.reduce((s, p) => s + numero(p.valor), 0) - despesasPagas.reduce((s, d) => s + numero(d.valor), 0)).toFixed(2)),
     resumoMensal: montarResumoMensal(db),
   };
 }
 
-module.exports = { adicionarMes, normalizarContrato, detalharContrato, calcularFinanceiro, montarExtrato, montarDespesas, montarResumoMensal };
+module.exports = { montarContasAPagar, montarExtratoGeral, adicionarMes, normalizarContrato, detalharContrato, calcularFinanceiro, montarExtrato, montarDespesas, montarResumoMensal };

@@ -302,3 +302,7 @@ h3 { font-family: 'Playfair Display', serif; font-size: 18px; margin: 0 0 16px; 
 .checklist-item a { color: var(--bordo); }
 .link-envio-box { display: flex; gap: 10px; align-items: center; background: #faf7f5; border: 1px solid var(--border); border-radius: 10px; padding: 12px 16px; margin-bottom: 20px; flex-wrap: wrap; }
 .link-envio-box input { flex: 1; min-width: 220px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; background: #fff; }
+
+.installment-row.atraso-row { grid-template-columns: 1.1fr 1.6fr 1fr 90px auto; }
+.extrato-filtros { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; margin: 6px 0 12px; }
+.extrato-filtros select { margin-left: 6px; }

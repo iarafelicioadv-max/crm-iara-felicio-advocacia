@@ -577,6 +577,7 @@ function renderFinanceiro() {
   document.getElementById('fin-recebido').textContent = moeda(f.totalRecebido);
   document.getElementById('fin-receber').textContent = moeda(f.aReceber);
   document.getElementById('fin-vencido').textContent = moeda(f.vencido);
+  document.getElementById('fin-apagar').textContent = moeda(f.totalAPagar);
   document.getElementById('fin-30').textContent = moeda(f.projecao30);
   document.getElementById('fin-60').textContent = moeda(f.projecao60);
   document.getElementById('fin-90').textContent = moeda(f.projecao90);
@@ -592,11 +593,10 @@ function renderFinanceiro() {
     return `<tr><td>${nomeCliente(c.clienteId)}</td><td><strong>${c.descricao}</strong><div class="contract-links">${links}</div></td><td>${c.numeroParcelasCliente || 1}× ${moeda(c.valorParcelaCliente)}</td><td>${moeda(c.valorTotal)}${c.honorarioExitoPercentual ? `<br><small>+ ${c.honorarioExitoPercentual}% de êxito</small>` : ''}</td><td>${moeda(c.valorLiquidoPrevisto)}<br><small>tarifas: ${moeda(c.taxaCartaoValor)}</small></td><td>${dataBr(c.proximoVencimento)}<br><small>${moeda(c.proximaParcelaValor)}</small><br><span class="badge ${c.vencido ? 'risco-critico' : 'risco-baixo'}">${situacao}</span></td><td>${assinatura}</td><td><button class="btn-secondary btn-small" onclick="verContrato(${c.id})">Detalhes</button> <button class="btn-secondary btn-small" onclick="editarContrato(${c.id})">Editar</button> <button class="btn-secondary btn-small" onclick="excluir('contratos', ${c.id})">Excluir</button></td></tr>`;
   }).join('') || '<tr><td colspan="8">Nenhum contrato cadastrado.</td></tr>';
   document.querySelector('#tabela-pagamentos-soltos tbody').innerHTML = (f.pagamentosSemContrato || []).map((p) => `<tr><td>${dataBr(p.data)}</td><td>${p.descricao || 'Recebimento'}</td><td>${moeda(p.valor)}</td><td><button class="btn-secondary btn-small" onclick="editarPagamento(${p.id})">Corrigir e vincular</button></td></tr>`).join('') || '<tr><td colspan="4">Nenhum recebimento sem contrato.</td></tr>';
-  const extrato = f.extrato || [];
-  document.getElementById('fin-extrato-total').textContent = extrato.length ? ` Total: ${moeda(extrato.reduce((s, p) => s + p.valor, 0))} em ${extrato.length} recebimento(s).` : '';
-  document.querySelector('#tabela-extrato-recebimentos tbody').innerHTML = extrato.map((p) => `<tr><td>${dataBr(p.data)}</td><td>${p.cliente}</td><td>${p.descricao}</td><td>${moeda(p.valor)}</td><td><button class="btn-secondary btn-small" onclick="editarPagamento(${p.id})">Editar</button> <button class="btn-secondary btn-small" onclick="excluir('pagamentos', ${p.id})">Excluir</button></td></tr>`).join('') || '<tr><td colspan="5">Nenhum recebimento registrado ainda.</td></tr>';
+  renderContasAPagar();
+  renderExtratoGeral();
 
-  document.getElementById('fin-despesas').textContent = moeda(f.totalDespesas);
+  const elDesp = document.getElementById('fin-despesas'); if (elDesp) elDesp.textContent = moeda(f.totalDespesas);
   document.getElementById('fin-saldo-geral').textContent = moeda(f.saldoGeral);
 
   const mesBr = (mes) => {
@@ -607,9 +607,74 @@ function renderFinanceiro() {
   const resumoMensal = f.resumoMensal || [];
   document.querySelector('#tabela-resumo-mensal tbody').innerHTML = resumoMensal.map((m) => `<tr><td>${mesBr(m.mes)}</td><td>${moeda(m.recebido)}</td><td>${moeda(m.gasto)}</td><td><span class="badge ${m.saldo >= 0 ? 'risco-baixo' : 'risco-critico'}">${moeda(m.saldo)}</span></td></tr>`).join('') || '<tr><td colspan="4">Sem dados suficientes ainda.</td></tr>';
 
-  const despesas = f.despesas || [];
-  document.getElementById('fin-despesas-total').textContent = despesas.length ? ` Total: ${moeda(despesas.reduce((s, d) => s + d.valor, 0))} em ${despesas.length} despesa(s).` : '';
-  document.querySelector('#tabela-despesas tbody').innerHTML = despesas.map((d) => `<tr><td>${dataBr(d.data)}</td><td>${d.categoria}</td><td>${d.descricao}</td><td><span class="badge ${d.fixo ? 'risco-medio' : 'risco-baixo'}">${d.fixo ? 'Fixo' : 'Avulso'}</span></td><td>${moeda(d.valor)}</td><td><button class="btn-secondary btn-small" onclick="editarDespesa(${d.id})">Editar</button> <button class="btn-secondary btn-small" onclick="excluir('despesas', ${d.id})">Excluir</button></td></tr>`).join('') || '<tr><td colspan="6">Nenhuma despesa registrada ainda.</td></tr>';
+}
+
+
+// ---------- Financeiro: contas a pagar, extrato e recebimentos em atraso ----------
+function mesBrLongo(mes) {
+  const [ano, m] = String(mes || '').split('-');
+  const nomes = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+  return m ? `${nomes[Number(m) - 1] || m}/${ano}` : mes;
+}
+function renderContasAPagar() {
+  const f = state.financeiro || {};
+  const contas = f.contasAPagar || [];
+  const resumo = [];
+  if (f.totalAPagarVencido) resumo.push(`<strong style="color:#c0392b">${moeda(f.totalAPagarVencido)} vencido</strong>`);
+  if (f.totalAPagar7dias) resumo.push(`${moeda(f.totalAPagar7dias)} vence nos próximos 7 dias`);
+  document.getElementById('fin-apagar-total').innerHTML = contas.length ? ` Total em aberto: ${moeda(f.totalAPagar)} em ${contas.length} conta(s)${resumo.length ? ' — ' + resumo.join(' · ') : ''}.` : '';
+  const classe = { 'Vencida': 'risco-critico', 'Vence em breve': 'risco-medio', 'A vencer': 'risco-baixo' };
+  document.querySelector('#tabela-contas-pagar tbody').innerHTML = contas.map((c) => `<tr><td>${dataBr(c.vencimento)}</td><td>${c.categoria}</td><td>${c.descricao}${c.fixo ? ' <small>(fixa, mensal)</small>' : ''}</td><td><span class="badge ${classe[c.situacao]}">${c.situacao}</span></td><td>${moeda(c.valor)}</td><td><button class="btn-primary btn-small" onclick="pagarConta(${c.id})">Marcar como paga</button> <button class="btn-secondary btn-small" onclick="editarDespesa(${c.id})">Editar</button> <button class="btn-secondary btn-small" onclick="excluir('despesas', ${c.id})">Excluir</button></td></tr>`).join('') || '<tr><td colspan="6">Nenhuma conta a pagar. Use “+ Despesa” para lançar uma conta com vencimento.</td></tr>';
+}
+async function pagarConta(id) {
+  const data = prompt('Data do pagamento (AAAA-MM-DD):', new Date().toISOString().slice(0, 10));
+  if (data === null) return;
+  try { await api(`/api/despesas/${id}/pagar`, { method:'POST', body:JSON.stringify({ data }) }); await carregarTudo(); } catch (e) { alert(e.message); }
+}
+function extratoFiltrado() {
+  const f = state.financeiro || {};
+  const mes = (document.getElementById('ext-mes') || {}).value || '';
+  const tipo = (document.getElementById('ext-tipo') || {}).value || '';
+  return (f.extratoGeral || []).filter((m) => (!mes || String(m.data || '').startsWith(mes)) && (!tipo || m.tipo === tipo));
+}
+function renderExtratoGeral() {
+  const f = state.financeiro || {};
+  const todos = f.extratoGeral || [];
+  const seletor = document.getElementById('ext-mes');
+  const atual = seletor.value;
+  const meses = [...new Set(todos.map((m) => String(m.data || '').slice(0, 7)).filter((m) => /^\d{4}-\d{2}$/.test(m)))].sort().reverse();
+  const mesCorrente = new Date().toISOString().slice(0, 7);
+  seletor.innerHTML = '<option value="">Todo o período</option>' + meses.map((m) => `<option value="${m}">${mesBrLongo(m)}</option>`).join('');
+  seletor.value = atual !== '' && meses.includes(atual) ? atual : (atual === '' && seletor.dataset.iniciado ? '' : (meses.includes(mesCorrente) ? mesCorrente : ''));
+  seletor.dataset.iniciado = '1';
+  const linhas = extratoFiltrado();
+  const entradas = linhas.filter((m) => m.tipo === 'Receita').reduce((s, m) => s + m.valor, 0);
+  const saidas = linhas.filter((m) => m.tipo === 'Despesa').reduce((s, m) => s + m.valor, 0);
+  document.getElementById('ext-entradas').textContent = moeda(entradas);
+  document.getElementById('ext-saidas').textContent = moeda(saidas);
+  const saldo = document.getElementById('ext-saldo');
+  saldo.textContent = moeda(entradas - saidas);
+  saldo.style.color = entradas - saidas >= 0 ? '#1e8449' : '#c0392b';
+  document.querySelector('#tabela-extrato-geral tbody').innerHTML = linhas.map((m) => {
+    const receita = m.tipo === 'Receita';
+    const acao = receita ? `<button class="btn-secondary btn-small" onclick="editarPagamento(${m.id})">Editar</button> <button class="btn-secondary btn-small" onclick="excluir('pagamentos', ${m.id})">Excluir</button>` : `<button class="btn-secondary btn-small" onclick="editarDespesa(${m.id})">Editar</button> <button class="btn-secondary btn-small" onclick="excluir('despesas', ${m.id})">Excluir</button>`;
+    return `<tr><td>${dataBr(m.data)}</td><td><span class="badge ${receita ? 'risco-baixo' : 'risco-critico'}">${m.tipo}</span></td><td>${m.categoria}</td><td>${m.descricao}<br><small>${m.detalhe || ''}</small></td><td style="color:${receita ? '#1e8449' : '#c0392b'}"><strong>${receita ? '+' : '−'} ${moeda(m.valor)}</strong></td><td>${moeda(m.saldoAcumulado)}</td><td>${acao}</td></tr>`;
+  }).join('') || '<tr><td colspan="7">Nenhuma movimentação neste período.</td></tr>';
+}
+function exportarExtratoCsv() {
+  const linhas = extratoFiltrado();
+  const csv = ['Data;Tipo;Categoria;Descrição;Valor;Saldo acumulado'].concat(linhas.map((m) => [m.data, m.tipo, m.categoria, `"${String(m.descricao || '').replace(/"/g, '""')}"`, (m.tipo === 'Receita' ? '' : '-') + Number(m.valor).toFixed(2).replace('.', ','), Number(m.saldoAcumulado).toFixed(2).replace('.', ',')].join(';'))).join('\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob(['﻿' + csv], { type:'text/csv;charset=utf-8' }));
+  a.download = `extrato-${(document.getElementById('ext-mes').value || 'completo')}.csv`;
+  a.click();
+}
+function verAtrasados() {
+  const f = state.financeiro || {};
+  const lista = f.repassesAtrasados || [];
+  const linhas = lista.map((r) => `<div class="installment-row atraso-row"><strong>${nomeCliente(r.clienteId)}</strong><span>${r.descricao} — ${r.numero}º repasse</span><span>venceu em ${dataBr(r.vencimento)}</span><span class="badge risco-critico">${moeda(r.valor)}</span><button class="btn-secondary btn-small" onclick="abrirModalPagamento(${r.contratoId}, ${r.valor})">Registrar recebimento</button></div>`).join('') || '<p>Nenhum valor em atraso.</p>';
+  modalBox.innerHTML = `<h3>Recebimentos em atraso</h3><div class="notice">São valores de contratos (parcelas/repasses líquidos da operadora do cartão ou do cliente) cuja data prevista já passou e que ainda não têm recebimento registrado. Se o dinheiro já caiu, clique em “Registrar recebimento”; se a data estava errada, corrija no contrato.</div><div class="installment-list">${linhas}</div><div class="modal-actions"><button class="btn-secondary" onclick="fecharModal()">Fechar</button></div>`;
+  overlay.classList.add('active');
 }
 
 function verContrato(id) {
@@ -797,13 +862,13 @@ function opcoesCategoriaDespesa(selecionada) {
 }
 function abrirModalDespesa() {
   fecharModal();
-  modalBox.innerHTML = `<h3>Registrar despesa</h3><label>Categoria</label><select id="f-categoria">${opcoesCategoriaDespesa()}</select><label>Descrição</label><input id="f-descricao" placeholder="Ex.: Aluguel da sala, assinatura do sistema..."><label>Valor</label><input id="f-valor" type="number" min="0" step="0.01"><label>Data</label><input id="f-data" type="date" value="${new Date().toISOString().slice(0, 10)}"><label class="check-line"><input id="f-fixo" type="checkbox"> É um gasto fixo (se repete todo mês, tipo aluguel ou assinatura)</label><div class="modal-actions"><button class="btn-secondary" onclick="fecharModal()">Cancelar</button><button class="btn-primary" onclick="salvarDespesa()">Salvar</button></div>`;
+  modalBox.innerHTML = `<h3>Registrar despesa</h3><label>Categoria</label><select id="f-categoria">${opcoesCategoriaDespesa()}</select><label>Descrição</label><input id="f-descricao" placeholder="Ex.: Aluguel da sala, assinatura do sistema..."><label>Valor</label><input id="f-valor" type="number" min="0" step="0.01"><label>Vencimento (ou data do gasto)</label><input id="f-data" type="date" value="${new Date().toISOString().slice(0, 10)}"><label class="check-line"><input id="f-paga" type="checkbox"> Já foi paga (entra direto no extrato como despesa)</label><label class="check-line"><input id="f-fixo" type="checkbox"> É um gasto fixo (se repete todo mês, tipo aluguel ou assinatura)</label><div class="modal-actions"><button class="btn-secondary" onclick="fecharModal()">Cancelar</button><button class="btn-primary" onclick="salvarDespesa()">Salvar</button></div>`;
   overlay.classList.add('active');
 }
 function editarDespesa(id) {
   const despesa = state.despesas.find((d) => d.id === id);
   if (!despesa) return;
-  modalBox.innerHTML = `<h3>Corrigir despesa</h3><label>Categoria</label><select id="f-categoria">${opcoesCategoriaDespesa(despesa.categoria)}</select><label>Descrição</label><input id="f-descricao" value="${textoSeguro(despesa.descricao || '')}"><label>Valor</label><input id="f-valor" type="number" min="0" step="0.01" value="${despesa.valor || ''}"><label>Data</label><input id="f-data" type="date" value="${despesa.data || ''}"><label class="check-line"><input id="f-fixo" type="checkbox" ${despesa.fixo ? 'checked' : ''}> É um gasto fixo (se repete todo mês, tipo aluguel ou assinatura)</label><div class="modal-actions"><button class="btn-secondary" onclick="fecharModal()">Cancelar</button><button class="btn-primary" onclick="salvarEdicaoDespesa(${id})">Salvar correção</button></div>`;
+  modalBox.innerHTML = `<h3>Corrigir despesa</h3><label>Categoria</label><select id="f-categoria">${opcoesCategoriaDespesa(despesa.categoria)}</select><label>Descrição</label><input id="f-descricao" value="${textoSeguro(despesa.descricao || '')}"><label>Valor</label><input id="f-valor" type="number" min="0" step="0.01" value="${despesa.valor || ''}"><label>Vencimento (ou data do gasto)</label><input id="f-data" type="date" value="${despesa.data || ''}"><label class="check-line"><input id="f-fixo" type="checkbox" ${despesa.fixo ? 'checked' : ''}> É um gasto fixo (se repete todo mês, tipo aluguel ou assinatura)</label><div class="modal-actions"><button class="btn-secondary" onclick="fecharModal()">Cancelar</button><button class="btn-primary" onclick="salvarEdicaoDespesa(${id})">Salvar correção</button></div>`;
   overlay.classList.add('active');
 }
 async function salvarEdicaoDespesa(id) {
@@ -814,7 +879,7 @@ async function salvarEdicaoDespesa(id) {
 }
 async function salvarDespesa() {
   try {
-    await api('/api/despesas', { method:'POST', body:JSON.stringify({ categoria:document.getElementById('f-categoria').value, descricao:document.getElementById('f-descricao').value, valor:Number(document.getElementById('f-valor').value), data:document.getElementById('f-data').value, fixo:document.getElementById('f-fixo').checked }) });
+    await api('/api/despesas', { method:'POST', body:JSON.stringify({ categoria:document.getElementById('f-categoria').value, descricao:document.getElementById('f-descricao').value, valor:Number(document.getElementById('f-valor').value), data:document.getElementById('f-data').value, fixo:document.getElementById('f-fixo').checked, status: document.getElementById('f-paga').checked ? 'Pago' : 'Pendente', dataPagamento: document.getElementById('f-paga').checked ? document.getElementById('f-data').value : null }) });
     fecharModal(); await carregarTudo();
   } catch (e) { alert(e.message); }
 }
