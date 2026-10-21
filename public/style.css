@@ -160,7 +160,7 @@ h3 { font-family: 'Playfair Display', serif; font-size: 18px; margin: 0 0 16px; 
   display: inline-block; padding: 4px 10px; border-radius: 20px; font-size: 12px; font-weight: 600;
 }
 .badge.status-Novo { background: #e8eefc; color: #2b5cd6; }
-.badge.status-Em-Andamento { background: #fff4de; color: #b8860b; }
+.badge.status-Em-Andamento, .badge.status-Revisão { background: #fff4de; color: #b8860b; }
 .badge.status-Aguardando { background: #fdeee8; color: #c1512e; }
 .badge.status-Concluído { background: #e6f4ea; color: #227a3d; }
 .badge.risco-critico { background: #fee4e2; color: #b42318; }

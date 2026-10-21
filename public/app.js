@@ -1,4 +1,4 @@
-const STATUSES = ['A confirmar', 'Pendente', 'Em execução', 'Em Andamento', 'Aguardando', 'Aguardando cliente', 'Em recurso', 'Cumprimento', 'Arquivado', 'Sem êxito', 'Novo', 'Concluído'];
+const STATUSES = ['A confirmar', 'Pendente', 'Em execução', 'Revisão', 'Aguardando', 'Aguardando cliente', 'Em recurso', 'Cumprimento', 'Arquivado', 'Sem êxito', 'Novo', 'Concluído'];
 const AREAS = ['Cível', 'Trabalhista', 'Família', 'Criminal', 'Tributário', 'Previdenciário', 'Outro'];
 const TIPOS_PROCESSO = ['Ação Ordinária', 'CPD', 'Mandado de Segurança', 'Execução', 'Outro'];
 const TIPOS_EVENTO = ['Audiência', 'Prazo', 'Reunião', 'Perícia', 'Outro'];
@@ -137,7 +137,7 @@ function renderDashboard() {
     <tr>
       <td>${p.clienteNome}</td>
       <td>${p.nome || '—'}</td>
-      <td><span class="badge ${classStatus(p.status)}">${p.status || '—'}</span></td>
+      <td><span class="badge ${classStatus(statusKanban(p))}">${statusKanban(p)}</span></td>
       <td>${p.area || '—'}</td>
     </tr>`).join('') || '<tr><td colspan="4">Nenhum processo cadastrado ainda.</td></tr>';
 
@@ -215,9 +215,9 @@ async function marcarTodosDocumentosVistos() {
 }
 
 const STATUS_ENCERRADOS = ['Arquivado', 'Sem êxito', 'Concluído'];
-const COR_STATUS = { 'A confirmar': '#8a7f78', 'Pendente': '#b8860b', 'Em execução': '#0e7490', 'Em Andamento': '#2b5cd6', 'Aguardando': '#c1512e', 'Aguardando cliente': '#d97706', 'Em recurso': '#7c3aed', 'Cumprimento': '#0f766e', 'Novo': '#2b5cd6', 'Arquivado': '#6b7280', 'Sem êxito': '#6b7280', 'Concluído': '#227a3d' };
+const COR_STATUS = { 'A confirmar': '#8a7f78', 'Pendente': '#b8860b', 'Em execução': '#0e7490', 'Revisão': '#2b5cd6', 'Aguardando': '#c1512e', 'Aguardando cliente': '#d97706', 'Em recurso': '#7c3aed', 'Cumprimento': '#0f766e', 'Novo': '#2b5cd6', 'Arquivado': '#6b7280', 'Sem êxito': '#6b7280', 'Concluído': '#227a3d' };
 
-const STATUS_ANTIGOS = { 'Triagem': 'A confirmar', 'Pré-contencioso': 'Pendente' };
+const STATUS_ANTIGOS = { 'Triagem': 'A confirmar', 'Pré-contencioso': 'Pendente', 'Em Andamento': 'Revisão' };
 function statusKanban(p) { return STATUSES.includes(p.status) ? p.status : (STATUS_ANTIGOS[p.status] || 'A confirmar'); }
 function hojeISO() { return new Date().toISOString().slice(0, 10); }
 function diasAte(dataISO) {
@@ -344,7 +344,7 @@ function renderProcessos() {
       <td>${p.nome || '—'}${p.numeroProcesso ? '<br><small style="color:var(--text-light)">' + p.numeroProcesso + '</small>' : ''}</td>
       <td>${nomeCliente(p.clienteId)}</td>
       <td>${p.area || '—'}</td>
-      <td><span class="badge ${classStatus(p.status)}">${p.status || '—'}</span></td>
+      <td><span class="badge ${classStatus(statusKanban(p))}">${statusKanban(p)}</span></td>
       <td>${p.prazo || '—'}</td>
       <td>
         <button class="btn-icon" title="Editar" onclick="abrirModalProcesso(${p.id})">✏️</button>
