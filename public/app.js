@@ -1,4 +1,4 @@
-const STATUSES = ['Triagem', 'Pré-contencioso', 'Em Andamento', 'Aguardando', 'Aguardando cliente', 'Em recurso', 'Cumprimento', 'Arquivado', 'Sem êxito', 'Novo', 'Concluído'];
+const STATUSES = ['A confirmar', 'Pendente', 'Em execução', 'Em Andamento', 'Aguardando', 'Aguardando cliente', 'Em recurso', 'Cumprimento', 'Arquivado', 'Sem êxito', 'Novo', 'Concluído'];
 const AREAS = ['Cível', 'Trabalhista', 'Família', 'Criminal', 'Tributário', 'Previdenciário', 'Outro'];
 const TIPOS_PROCESSO = ['Ação Ordinária', 'CPD', 'Mandado de Segurança', 'Execução', 'Outro'];
 const TIPOS_EVENTO = ['Audiência', 'Prazo', 'Reunião', 'Perícia', 'Outro'];
@@ -215,9 +215,10 @@ async function marcarTodosDocumentosVistos() {
 }
 
 const STATUS_ENCERRADOS = ['Arquivado', 'Sem êxito', 'Concluído'];
-const COR_STATUS = { 'Triagem': '#8a7f78', 'Pré-contencioso': '#b8860b', 'Em Andamento': '#2b5cd6', 'Aguardando': '#c1512e', 'Aguardando cliente': '#d97706', 'Em recurso': '#7c3aed', 'Cumprimento': '#0f766e', 'Novo': '#2b5cd6', 'Arquivado': '#6b7280', 'Sem êxito': '#6b7280', 'Concluído': '#227a3d' };
+const COR_STATUS = { 'A confirmar': '#8a7f78', 'Pendente': '#b8860b', 'Em execução': '#0e7490', 'Em Andamento': '#2b5cd6', 'Aguardando': '#c1512e', 'Aguardando cliente': '#d97706', 'Em recurso': '#7c3aed', 'Cumprimento': '#0f766e', 'Novo': '#2b5cd6', 'Arquivado': '#6b7280', 'Sem êxito': '#6b7280', 'Concluído': '#227a3d' };
 
-function statusKanban(p) { return STATUSES.includes(p.status) ? p.status : 'Triagem'; }
+const STATUS_ANTIGOS = { 'Triagem': 'A confirmar', 'Pré-contencioso': 'Pendente' };
+function statusKanban(p) { return STATUSES.includes(p.status) ? p.status : (STATUS_ANTIGOS[p.status] || 'A confirmar'); }
 function hojeISO() { return new Date().toISOString().slice(0, 10); }
 function diasAte(dataISO) {
   if (!dataISO) return null;
@@ -1138,7 +1139,7 @@ function abrirModalProcesso(id) {
     <label>Cliente</label><select id="f-cliente"><option value="">— nenhum —</option>${opcoesClientes(p.clienteId)}</select>
     <label>Área</label><select id="f-area">${opcoesLista(AREAS, p.area)}</select>
     <label>Tipo</label><select id="f-tipo">${opcoesLista(TIPOS_PROCESSO, p.tipo)}</select>
-    <label>Status</label><select id="f-status">${opcoesLista(STATUSES, p.status || 'Triagem')}</select>
+    <label>Status</label><select id="f-status">${opcoesLista(STATUSES, p.id ? statusKanban(p) : 'A confirmar')}</select>
     <label>Prazo</label><input type="date" id="f-prazo" value="${p.prazo || ''}" />
     <label><input type="checkbox" id="f-liminar" ${p.liminarDeferida ? 'checked' : ''} style="width:auto;display:inline-block;"/> Liminar deferida</label>
     <div class="modal-actions">
