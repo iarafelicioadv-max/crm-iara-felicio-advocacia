@@ -80,7 +80,14 @@
 
     <!-- KANBAN -->
     <section id="view-kanban" class="view">
-      <h2>Quadro Kanban</h2>
+      <div class="view-header"><div><h2>Quadro Kanban</h2><p class="subtitle">Arraste o cartão entre as colunas ou use “Mover para…”. Os cartões mais urgentes ficam no topo de cada coluna.</p></div><button class="btn-primary" onclick="abrirModalProcesso()">+ Novo processo</button></div>
+      <div class="kanban-resumo" id="kanban-resumo"></div>
+      <div class="kanban-filtros">
+        <input id="kb-busca" type="search" placeholder="Buscar por ação, cliente ou nº do processo…" oninput="renderKanban()">
+        <select id="kb-area" onchange="renderKanban()"><option value="">Todas as áreas</option></select>
+        <select id="kb-urgencia" onchange="renderKanban()"><option value="">Qualquer prazo</option><option value="atrasado">Com prazo vencido</option><option value="semana">Vencem em até 7 dias</option><option value="sem">Sem prazo definido</option></select>
+        <label class="check-line"><input type="checkbox" id="kb-arquivados" onchange="renderKanban()"> Mostrar encerrados (arquivado, sem êxito, concluído)</label>
+      </div>
       <div class="kanban-board" id="kanban-board"></div>
     </section>
 

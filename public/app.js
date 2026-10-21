@@ -1,4 +1,4 @@
-const STATUSES = ['Triagem', 'Pré-contencioso', 'Em Andamento', 'Aguardando', 'Em recurso', 'Cumprimento', 'Arquivado', 'Sem êxito', 'Novo', 'Concluído'];
+const STATUSES = ['Triagem', 'Pré-contencioso', 'Em Andamento', 'Aguardando', 'Aguardando cliente', 'Em recurso', 'Cumprimento', 'Arquivado', 'Sem êxito', 'Novo', 'Concluído'];
 const AREAS = ['Cível', 'Trabalhista', 'Família', 'Criminal', 'Tributário', 'Previdenciário', 'Outro'];
 const TIPOS_PROCESSO = ['Ação Ordinária', 'CPD', 'Mandado de Segurança', 'Execução', 'Outro'];
 const TIPOS_EVENTO = ['Audiência', 'Prazo', 'Reunião', 'Perícia', 'Outro'];
@@ -214,27 +214,105 @@ async function marcarTodosDocumentosVistos() {
   renderDocumentosNovos(d.documentosNovos || []);
 }
 
+const STATUS_ENCERRADOS = ['Arquivado', 'Sem êxito', 'Concluído'];
+const COR_STATUS = { 'Triagem': '#8a7f78', 'Pré-contencioso': '#b8860b', 'Em Andamento': '#2b5cd6', 'Aguardando': '#c1512e', 'Aguardando cliente': '#d97706', 'Em recurso': '#7c3aed', 'Cumprimento': '#0f766e', 'Novo': '#2b5cd6', 'Arquivado': '#6b7280', 'Sem êxito': '#6b7280', 'Concluído': '#227a3d' };
+
+function statusKanban(p) { return STATUSES.includes(p.status) ? p.status : 'Triagem'; }
+function hojeISO() { return new Date().toISOString().slice(0, 10); }
+function diasAte(dataISO) {
+  if (!dataISO) return null;
+  return Math.round((new Date(dataISO + 'T00:00:00') - new Date(hojeISO() + 'T00:00:00')) / 86400000);
+}
+// Próximo compromisso do processo: prazo do processo, tarefas abertas e eventos futuros ligados a ele.
+function proximoPrazoProcesso(p) {
+  const hoje = hojeISO();
+  const itens = [];
+  if (p.prazo) itens.push({ data: p.prazo, rotulo: 'Prazo do processo' });
+  state.tarefas.filter((t) => t.processoId === p.id && t.status !== 'Concluída' && t.prazo)
+    .forEach((t) => itens.push({ data: t.prazo, rotulo: `${t.tipoPrazo === 'Fatal' ? 'Prazo fatal' : 'Tarefa'}: ${t.titulo}` }));
+  state.eventos.filter((e) => e.processoId === p.id && e.data && e.data >= hoje && ['Prazo', 'Audiência', 'Perícia'].includes(e.tipo))
+    .forEach((e) => itens.push({ data: e.data, rotulo: `${e.tipo}: ${e.titulo}` }));
+  if (!itens.length) return null;
+  itens.sort((x, y) => x.data.localeCompare(y.data));
+  return { ...itens[0], dias: diasAte(itens[0].data) };
+}
+function textoPrazo(dias) {
+  if (dias === null) return '';
+  if (dias < 0) return `venceu há ${-dias} dia${dias === -1 ? '' : 's'}`;
+  if (dias === 0) return 'vence hoje';
+  if (dias === 1) return 'vence amanhã';
+  return `em ${dias} dias`;
+}
+function classeUrgencia(dias) {
+  if (dias === null) return 'sem';
+  if (dias < 0) return 'atrasado';
+  if (dias <= 3) return 'urgente';
+  if (dias <= 7) return 'semana';
+  return 'ok';
+}
+
 function renderKanban() {
   const board = document.getElementById('kanban-board');
-  board.innerHTML = STATUSES.map((status) => `
-    <div class="kanban-col" data-status="${status}">
-      <h4>${status} (${state.processos.filter((p) => p.status === status).length})</h4>
+  const selArea = document.getElementById('kb-area');
+  if (selArea.options.length <= 1) selArea.innerHTML = '<option value="">Todas as áreas</option>' + AREAS.map((a) => `<option>${a}</option>`).join('');
+  const busca = document.getElementById('kb-busca').value.trim().toLocaleLowerCase('pt-BR');
+  const area = selArea.value;
+  const urg = document.getElementById('kb-urgencia').value;
+  const mostrarEncerrados = document.getElementById('kb-arquivados').checked;
+
+  const todos = state.processos.map((p) => ({ p, prox: proximoPrazoProcesso(p) }));
+  const filtrados = todos.filter(({ p, prox }) => {
+    if (area && p.area !== area) return false;
+    if (busca && !`${p.nome || ''} ${nomeCliente(p.clienteId)} ${p.numeroProcesso || ''}`.toLocaleLowerCase('pt-BR').includes(busca)) return false;
+    if (urg === 'atrasado' && !(prox && prox.dias < 0)) return false;
+    if (urg === 'semana' && !(prox && prox.dias >= 0 && prox.dias <= 7)) return false;
+    if (urg === 'sem' && prox) return false;
+    return true;
+  });
+
+  const ativos = todos.filter(({ p }) => !STATUS_ENCERRADOS.includes(statusKanban(p)));
+  const nAtrasados = ativos.filter(({ prox }) => prox && prox.dias < 0).length;
+  const nSemana = ativos.filter(({ prox }) => prox && prox.dias >= 0 && prox.dias <= 7).length;
+  const nSem = ativos.filter(({ prox }) => !prox).length;
+  document.getElementById('kanban-resumo').innerHTML =
+    `<span class="kb-chip kb-atrasado" onclick="filtrarKanban('atrasado')"><strong>${nAtrasados}</strong> com prazo vencido</span>` +
+    `<span class="kb-chip kb-semana" onclick="filtrarKanban('semana')"><strong>${nSemana}</strong> vencem em até 7 dias</span>` +
+    `<span class="kb-chip kb-sem" onclick="filtrarKanban('sem')"><strong>${nSem}</strong> sem prazo definido</span>` +
+    `<span class="kb-chip" onclick="filtrarKanban('')"><strong>${ativos.length}</strong> processos em andamento</span>`;
+
+  const colunas = STATUSES.filter((s) => mostrarEncerrados || !STATUS_ENCERRADOS.includes(s));
+  board.innerHTML = colunas.map((status) => {
+    const cartoes = filtrados.filter(({ p }) => statusKanban(p) === status)
+      .sort((a, b) => (a.prox ? a.prox.data : '9999').localeCompare(b.prox ? b.prox.data : '9999'));
+    const atrasadosCol = cartoes.filter(({ prox }) => prox && prox.dias < 0).length;
+    const vazia = !cartoes.length;
+    return `
+    <div class="kanban-col ${vazia ? 'vazia' : ''}" data-status="${status}" style="border-top:4px solid ${COR_STATUS[status] || '#8a7f78'}">
+      <h4>${status} <span class="kb-count">${cartoes.length}</span>${atrasadosCol ? `<span class="kb-count kb-count-alerta" title="com prazo vencido">${atrasadosCol} ⚠</span>` : ''}</h4>
       <div class="kanban-cards" data-status="${status}">
-        ${state.processos.filter((p) => p.status === status).map((p) => `
-          <div class="kanban-card" draggable="true" data-id="${p.id}">
-            <strong>${p.nome || 'Processo #' + p.id}</strong>
-            ${nomeCliente(p.clienteId)}<br/>
-            <small>${p.area || ''}</small>
-          </div>
-        `).join('')}
+        ${cartoes.map(({ p, prox }) => {
+          const nTarefas = state.tarefas.filter((t) => t.processoId === p.id && t.status !== 'Concluída').length;
+          const cls = prox ? classeUrgencia(prox.dias) : 'sem';
+          return `
+          <div class="kanban-card urg-${cls}" draggable="true" data-id="${p.id}" onclick="abrirModalProcesso(${p.id})">
+            <strong>${textoSeguro(p.nome || 'Processo #' + p.id)}</strong>
+            <div class="kb-cliente">${textoSeguro(nomeCliente(p.clienteId))}</div>
+            ${p.numeroProcesso ? `<div class="kb-cnj">${textoSeguro(p.numeroProcesso)}</div>` : ''}
+            <div class="kb-tags">${p.area ? `<span class="kb-tag">${textoSeguro(p.area)}</span>` : ''}${p.liminarDeferida ? '<span class="kb-tag kb-tag-ok">Liminar deferida</span>' : ''}${nTarefas ? `<span class="kb-tag">${nTarefas} tarefa${nTarefas > 1 ? 's' : ''} aberta${nTarefas > 1 ? 's' : ''}</span>` : ''}</div>
+            ${prox ? `<div class="kb-prazo kb-prazo-${cls}" title="${textoSeguro(prox.rotulo)}">📅 ${dataBr(prox.data)} · ${textoPrazo(prox.dias)}<br><small>${textoSeguro(prox.rotulo)}</small></div>` : '<div class="kb-prazo kb-prazo-sem">Sem prazo definido</div>'}
+            <div class="kb-acoes" onclick="event.stopPropagation()">
+              <select onchange="moverProcesso(${p.id}, this.value)" aria-label="Mover para"><option value="">Mover para…</option>${STATUSES.filter((s) => s !== statusKanban(p)).map((s) => `<option>${s}</option>`).join('')}</select>
+              <button class="btn-secondary btn-small" onclick="abrirModalTarefa(${p.id})">+ Tarefa</button>
+            </div>
+          </div>`;
+        }).join('')}
       </div>
-    </div>
-  `).join('');
+    </div>`;
+  }).join('');
 
   board.querySelectorAll('.kanban-card').forEach((card) => {
-    card.addEventListener('dragstart', (e) => {
-      e.dataTransfer.setData('text/plain', card.dataset.id);
-    });
+    card.addEventListener('dragstart', (e) => { e.dataTransfer.setData('text/plain', card.dataset.id); card.classList.add('arrastando'); });
+    card.addEventListener('dragend', () => card.classList.remove('arrastando'));
   });
   board.querySelectorAll('.kanban-col').forEach((col) => {
     col.addEventListener('dragover', (e) => { e.preventDefault(); col.classList.add('drag-over'); });
@@ -242,12 +320,20 @@ function renderKanban() {
     col.addEventListener('drop', async (e) => {
       e.preventDefault();
       col.classList.remove('drag-over');
-      const id = e.dataTransfer.getData('text/plain');
-      const novoStatus = col.dataset.status;
-      await api(`/api/processos/${id}`, { method: 'PUT', body: JSON.stringify({ status: novoStatus }) });
-      await carregarTudo();
+      await moverProcesso(e.dataTransfer.getData('text/plain'), col.dataset.status);
     });
   });
+}
+function filtrarKanban(valor) {
+  document.getElementById('kb-urgencia').value = valor;
+  renderKanban();
+}
+async function moverProcesso(id, novoStatus) {
+  if (!novoStatus) return;
+  const p = state.processos.find((x) => x.id === Number(id));
+  if (p && statusKanban(p) === novoStatus) return;
+  await api(`/api/processos/${id}`, { method: 'PUT', body: JSON.stringify({ status: novoStatus }) });
+  await carregarTudo();
 }
 
 function renderProcessos() {
@@ -727,8 +813,8 @@ async function moverLead(id) {
   await carregarTudo();
 }
 
-function abrirModalTarefa() {
-  modalBox.innerHTML = `<h3>Nova Tarefa</h3><label>Título</label><input id="f-titulo"><label>Processo</label><select id="f-processo">${opcoesProcessos()}</select><label>Prazo</label><input type="date" id="f-prazo"><label>Tipo de prazo</label><select id="f-tipo-prazo"><option>Interno</option><option>Fatal</option></select><label>Prioridade</label><select id="f-prioridade"><option>Alta</option><option selected>Média</option><option>Baixa</option></select><label>Status</label><select id="f-status-tarefa">${opcoesLista(STATUS_TAREFA, 'A fazer')}</select><div class="modal-actions"><button class="btn-secondary" onclick="fecharModal()">Cancelar</button><button class="btn-primary" onclick="salvarTarefa()">Salvar</button></div>`;
+function abrirModalTarefa(processoId) {
+  modalBox.innerHTML = `<h3>Nova Tarefa</h3><label>Título</label><input id="f-titulo"><label>Processo</label><select id="f-processo">${opcoesProcessos(processoId)}</select><label>Prazo</label><input type="date" id="f-prazo"><label>Tipo de prazo</label><select id="f-tipo-prazo"><option>Interno</option><option>Fatal</option></select><label>Prioridade</label><select id="f-prioridade"><option>Alta</option><option selected>Média</option><option>Baixa</option></select><label>Status</label><select id="f-status-tarefa">${opcoesLista(STATUS_TAREFA, 'A fazer')}</select><div class="modal-actions"><button class="btn-secondary" onclick="fecharModal()">Cancelar</button><button class="btn-primary" onclick="salvarTarefa()">Salvar</button></div>`;
   overlay.classList.add('active');
 }
 async function salvarTarefa() {
