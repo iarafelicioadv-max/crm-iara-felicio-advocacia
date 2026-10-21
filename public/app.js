@@ -576,7 +576,6 @@ function renderFinanceiro() {
   document.getElementById('fin-liquido').textContent = moeda(f.totalLiquidoPrevisto);
   document.getElementById('fin-recebido').textContent = moeda(f.totalRecebido);
   document.getElementById('fin-receber').textContent = moeda(f.aReceber);
-  document.getElementById('fin-vencido').textContent = moeda(f.vencido);
   document.getElementById('fin-apagar').textContent = moeda(f.totalAPagar);
   document.getElementById('fin-30').textContent = moeda(f.projecao30);
   document.getElementById('fin-60').textContent = moeda(f.projecao60);
@@ -610,7 +609,7 @@ function renderFinanceiro() {
 }
 
 
-// ---------- Financeiro: contas a pagar, extrato e recebimentos em atraso ----------
+// ---------- Financeiro: contas a pagar, extrato ----------
 function mesBrLongo(mes) {
   const [ano, m] = String(mes || '').split('-');
   const nomes = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
@@ -669,14 +668,6 @@ function exportarExtratoCsv() {
   a.download = `extrato-${(document.getElementById('ext-mes').value || 'completo')}.csv`;
   a.click();
 }
-function verAtrasados() {
-  const f = state.financeiro || {};
-  const lista = f.repassesAtrasados || [];
-  const linhas = lista.map((r) => `<div class="installment-row atraso-row"><strong>${nomeCliente(r.clienteId)}</strong><span>${r.descricao} — ${r.numero}º repasse</span><span>venceu em ${dataBr(r.vencimento)}</span><span class="badge risco-critico">${moeda(r.valor)}</span><button class="btn-secondary btn-small" onclick="abrirModalPagamento(${r.contratoId}, ${r.valor})">Registrar recebimento</button></div>`).join('') || '<p>Nenhum valor em atraso.</p>';
-  modalBox.innerHTML = `<h3>Recebimentos em atraso</h3><div class="notice">São valores de contratos (parcelas/repasses líquidos da operadora do cartão ou do cliente) cuja data prevista já passou e que ainda não têm recebimento registrado. Se o dinheiro já caiu, clique em “Registrar recebimento”; se a data estava errada, corrija no contrato.</div><div class="installment-list">${linhas}</div><div class="modal-actions"><button class="btn-secondary" onclick="fecharModal()">Fechar</button></div>`;
-  overlay.classList.add('active');
-}
-
 function verContrato(id) {
   const c = (state.financeiro.contratos || []).find((item) => item.id === id);
   if (!c) return;

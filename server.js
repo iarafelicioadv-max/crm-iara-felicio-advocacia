@@ -1374,7 +1374,7 @@ app.get('/api/dashboard', async (req, res) => {
     publicacoesDjenNaoVistas: (db.publicacoes || []).filter((p) => p.origem === 'DJEN' && !p.visto).length,
     excecoesCriticas: controladoria.filter((i) => i.risco === 'Crítico').length,
     excecoesTotal: controladoria.length,
-    financeiroVencido: financeiro.vencido,
+    financeiroVencido: financeiro.totalAPagarVencido,
   });
 });
 
