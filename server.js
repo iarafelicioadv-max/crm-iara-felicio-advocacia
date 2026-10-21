@@ -188,7 +188,7 @@ function mapStatusPlanilha(statusTexto) {
   const s = String(statusTexto || '').toLowerCase();
   if (s.includes('conclu') || s.includes('encerr') || s.includes('extint') || s.includes('arquiv')) return 'Concluído';
   if (s.includes('sentença') || s.includes('sentenca') || s.includes('aguard')) return 'Aguardando';
-  if (s.includes('inicial') || s.includes('novo')) return 'Novo';
+  if (s.includes('inicial') || s.includes('novo')) return 'Pendente';
   return 'Em Andamento';
 }
 

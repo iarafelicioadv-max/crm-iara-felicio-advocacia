@@ -1,4 +1,4 @@
-const STATUSES = ['A confirmar', 'Pendente', 'Em execução', 'Revisão', 'Aguardando', 'Concluído', 'Em recurso', 'Cumprimento', 'Arquivado', 'Sem êxito', 'Novo'];
+const STATUSES = ['A confirmar', 'Pendente', 'Em execução', 'Revisão', 'Aguardando', 'Concluído', 'Em recurso', 'Cumprimento', 'Arquivado', 'Sem êxito'];
 const AREAS = ['Cível', 'Trabalhista', 'Família', 'Criminal', 'Tributário', 'Previdenciário', 'Outro'];
 const TIPOS_PROCESSO = ['Ação Ordinária', 'CPD', 'Mandado de Segurança', 'Execução', 'Outro'];
 const TIPOS_EVENTO = ['Audiência', 'Prazo', 'Reunião', 'Perícia', 'Outro'];
@@ -215,9 +215,9 @@ async function marcarTodosDocumentosVistos() {
 }
 
 const STATUS_ENCERRADOS = ['Arquivado', 'Sem êxito'];
-const COR_STATUS = { 'A confirmar': '#8a7f78', 'Pendente': '#b8860b', 'Em execução': '#0e7490', 'Revisão': '#2b5cd6', 'Aguardando': '#c1512e', 'Concluído': '#227a3d', 'Em recurso': '#7c3aed', 'Cumprimento': '#0f766e', 'Novo': '#2b5cd6', 'Arquivado': '#6b7280', 'Sem êxito': '#6b7280', 'Concluído': '#227a3d' };
+const COR_STATUS = { 'A confirmar': '#8a7f78', 'Pendente': '#b8860b', 'Em execução': '#0e7490', 'Revisão': '#2b5cd6', 'Aguardando': '#c1512e', 'Concluído': '#227a3d', 'Em recurso': '#7c3aed', 'Cumprimento': '#0f766e', 'Arquivado': '#6b7280', 'Sem êxito': '#6b7280', 'Concluído': '#227a3d' };
 
-const STATUS_ANTIGOS = { 'Triagem': 'A confirmar', 'Pré-contencioso': 'Pendente', 'Em Andamento': 'Revisão', 'Aguardando cliente': 'Pendente', 'Finalizado': 'Concluído' };
+const STATUS_ANTIGOS = { 'Triagem': 'A confirmar', 'Pré-contencioso': 'Pendente', 'Em Andamento': 'Revisão', 'Aguardando cliente': 'Pendente', 'Finalizado': 'Concluído', 'Novo': 'Pendente' };
 function statusKanban(p) { return STATUSES.includes(p.status) ? p.status : (STATUS_ANTIGOS[p.status] || 'A confirmar'); }
 function hojeISO() { return new Date().toISOString().slice(0, 10); }
 function diasAte(dataISO) {
