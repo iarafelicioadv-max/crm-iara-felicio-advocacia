@@ -1,4 +1,4 @@
-const STATUSES = ['A confirmar', 'Pendente', 'Em execução', 'Revisão', 'Aguardando', 'Aguardando cliente', 'Em recurso', 'Cumprimento', 'Arquivado', 'Sem êxito', 'Novo', 'Concluído'];
+const STATUSES = ['A confirmar', 'Pendente', 'Em execução', 'Revisão', 'Aguardando', 'Finalizado', 'Em recurso', 'Cumprimento', 'Arquivado', 'Sem êxito', 'Novo', 'Concluído'];
 const AREAS = ['Cível', 'Trabalhista', 'Família', 'Criminal', 'Tributário', 'Previdenciário', 'Outro'];
 const TIPOS_PROCESSO = ['Ação Ordinária', 'CPD', 'Mandado de Segurança', 'Execução', 'Outro'];
 const TIPOS_EVENTO = ['Audiência', 'Prazo', 'Reunião', 'Perícia', 'Outro'];
@@ -215,9 +215,9 @@ async function marcarTodosDocumentosVistos() {
 }
 
 const STATUS_ENCERRADOS = ['Arquivado', 'Sem êxito', 'Concluído'];
-const COR_STATUS = { 'A confirmar': '#8a7f78', 'Pendente': '#b8860b', 'Em execução': '#0e7490', 'Revisão': '#2b5cd6', 'Aguardando': '#c1512e', 'Aguardando cliente': '#d97706', 'Em recurso': '#7c3aed', 'Cumprimento': '#0f766e', 'Novo': '#2b5cd6', 'Arquivado': '#6b7280', 'Sem êxito': '#6b7280', 'Concluído': '#227a3d' };
+const COR_STATUS = { 'A confirmar': '#8a7f78', 'Pendente': '#b8860b', 'Em execução': '#0e7490', 'Revisão': '#2b5cd6', 'Aguardando': '#c1512e', 'Finalizado': '#227a3d', 'Em recurso': '#7c3aed', 'Cumprimento': '#0f766e', 'Novo': '#2b5cd6', 'Arquivado': '#6b7280', 'Sem êxito': '#6b7280', 'Concluído': '#227a3d' };
 
-const STATUS_ANTIGOS = { 'Triagem': 'A confirmar', 'Pré-contencioso': 'Pendente', 'Em Andamento': 'Revisão' };
+const STATUS_ANTIGOS = { 'Triagem': 'A confirmar', 'Pré-contencioso': 'Pendente', 'Em Andamento': 'Revisão', 'Aguardando cliente': 'Pendente' };
 function statusKanban(p) { return STATUSES.includes(p.status) ? p.status : (STATUS_ANTIGOS[p.status] || 'A confirmar'); }
 function hojeISO() { return new Date().toISOString().slice(0, 10); }
 function diasAte(dataISO) {
@@ -261,7 +261,7 @@ function renderKanban() {
   const urg = document.getElementById('kb-urgencia').value;
   const mostrarEncerrados = document.getElementById('kb-arquivados').checked;
 
-  const todos = state.processos.map((p) => ({ p, prox: proximoPrazoProcesso(p) }));
+  const todos = state.processos.map((p) => ({ p, prox: statusKanban(p) === 'Finalizado' ? null : proximoPrazoProcesso(p) }));
   const filtrados = todos.filter(({ p, prox }) => {
     if (area && p.area !== area) return false;
     if (busca && !`${p.nome || ''} ${nomeCliente(p.clienteId)} ${p.numeroProcesso || ''}`.toLocaleLowerCase('pt-BR').includes(busca)) return false;
@@ -271,7 +271,7 @@ function renderKanban() {
     return true;
   });
 
-  const ativos = todos.filter(({ p }) => !STATUS_ENCERRADOS.includes(statusKanban(p)));
+  const ativos = todos.filter(({ p }) => !STATUS_ENCERRADOS.includes(statusKanban(p)) && statusKanban(p) !== 'Finalizado');
   const nAtrasados = ativos.filter(({ prox }) => prox && prox.dias < 0).length;
   const nSemana = ativos.filter(({ prox }) => prox && prox.dias >= 0 && prox.dias <= 7).length;
   const nSem = ativos.filter(({ prox }) => !prox).length;
@@ -300,7 +300,7 @@ function renderKanban() {
             <div class="kb-cliente">${textoSeguro(nomeCliente(p.clienteId))}</div>
             ${p.numeroProcesso ? `<div class="kb-cnj">${textoSeguro(p.numeroProcesso)}</div>` : ''}
             <div class="kb-tags">${p.area ? `<span class="kb-tag">${textoSeguro(p.area)}</span>` : ''}${p.liminarDeferida ? '<span class="kb-tag kb-tag-ok">Liminar deferida</span>' : ''}${nTarefas ? `<span class="kb-tag">${nTarefas} tarefa${nTarefas > 1 ? 's' : ''} aberta${nTarefas > 1 ? 's' : ''}</span>` : ''}</div>
-            ${prox ? `<div class="kb-prazo kb-prazo-${cls}" title="${textoSeguro(prox.rotulo)}">📅 ${dataBr(prox.data)} · ${textoPrazo(prox.dias)}<br><small>${textoSeguro(prox.rotulo)}</small></div>` : '<div class="kb-prazo kb-prazo-sem">Sem prazo definido</div>'}
+            ${statusKanban(p) === 'Finalizado' ? '' : prox ? `<div class="kb-prazo kb-prazo-${cls}" title="${textoSeguro(prox.rotulo)}">📅 ${dataBr(prox.data)} · ${textoPrazo(prox.dias)}<br><small>${textoSeguro(prox.rotulo)}</small></div>` : '<div class="kb-prazo kb-prazo-sem">Sem prazo definido</div>'}
             <div class="kb-acoes" onclick="event.stopPropagation()">
               <select onchange="moverProcesso(${p.id}, this.value)" aria-label="Mover para"><option value="">Mover para…</option>${STATUSES.filter((s) => s !== statusKanban(p)).map((s) => `<option>${s}</option>`).join('')}</select>
               <button class="btn-secondary btn-small" onclick="abrirModalTarefa(${p.id})">+ Tarefa</button>
