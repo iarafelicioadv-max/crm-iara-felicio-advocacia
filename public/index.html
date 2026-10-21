@@ -86,7 +86,7 @@
         <input id="kb-busca" type="search" placeholder="Buscar por ação, cliente ou nº do processo…" oninput="renderKanban()">
         <select id="kb-area" onchange="renderKanban()"><option value="">Todas as áreas</option></select>
         <select id="kb-urgencia" onchange="renderKanban()"><option value="">Qualquer prazo</option><option value="atrasado">Com prazo vencido</option><option value="semana">Vencem em até 7 dias</option><option value="sem">Sem prazo definido</option></select>
-        <label class="check-line"><input type="checkbox" id="kb-arquivados" onchange="renderKanban()"> Mostrar encerrados (arquivado, sem êxito, concluído)</label>
+        <label class="check-line"><input type="checkbox" id="kb-arquivados" onchange="renderKanban()"> Mostrar encerrados (arquivado, sem êxito)</label>
       </div>
       <div class="kanban-board" id="kanban-board"></div>
     </section>
