@@ -54,6 +54,7 @@ body {
   padding: 8px;
 }
 .brand-badge img { width: 100%; height: 100%; object-fit: contain; }
+.brand-logo { display: block; width: 100%; border-radius: 12px; }
 .brand h1 { font-family: 'Playfair Display', serif; font-size: 14px; letter-spacing: 1px; margin: 0; }
 .brand span { font-size: 9px; letter-spacing: 2px; color: var(--creme); }
 
