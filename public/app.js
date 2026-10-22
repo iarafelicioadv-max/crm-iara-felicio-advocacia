@@ -228,14 +228,37 @@ function diasAte(dataISO) {
 function proximoPrazoProcesso(p) {
   const hoje = hojeISO();
   const itens = [];
-  if (p.prazo) itens.push({ data: p.prazo, rotulo: 'Prazo do processo' });
+  if (p.prazo && !p.prazoCumprido) itens.push({ data: p.prazo, rotulo: 'Prazo do processo', tipo: 'processo', id: p.id });
   state.tarefas.filter((t) => t.processoId === p.id && t.status !== 'Concluída' && t.prazo)
-    .forEach((t) => itens.push({ data: t.prazo, rotulo: `${t.tipoPrazo === 'Fatal' ? 'Prazo fatal' : 'Tarefa'}: ${t.titulo}` }));
-  state.eventos.filter((e) => e.processoId === p.id && e.data && e.data >= hoje && ['Prazo', 'Audiência', 'Perícia'].includes(e.tipo))
-    .forEach((e) => itens.push({ data: e.data, rotulo: `${e.tipo}: ${e.titulo}` }));
+    .forEach((t) => itens.push({ data: t.prazo, rotulo: `${t.tipoPrazo === 'Fatal' ? 'Prazo fatal' : 'Tarefa'}: ${t.titulo}`, tipo: 'tarefa', id: t.id }));
+  state.eventos.filter((e) => e.processoId === p.id && !e.cumprido && e.data && (e.tipo === 'Prazo' || e.data >= hoje) && ['Prazo', 'Audiência', 'Perícia'].includes(e.tipo))
+    .forEach((e) => itens.push({ data: e.data, rotulo: `${e.tipo}: ${e.titulo}`, tipo: 'evento', id: e.id }));
   if (!itens.length) return null;
   itens.sort((x, y) => x.data.localeCompare(y.data));
   return { ...itens[0], dias: diasAte(itens[0].data) };
+}
+// Último "ok" dado em prazos do processo (para mostrar quem cumpriu e permitir desfazer).
+function ultimoPrazoCumprido(p) {
+  const lista = [];
+  if (p.prazoCumprido && p.prazoCumpridoEm) lista.push({ tipo: 'processo', id: p.id, em: p.prazoCumpridoEm, por: p.prazoCumpridoPor, rotulo: 'Prazo do processo' });
+  state.eventos.filter((e) => e.processoId === p.id && e.cumprido && e.cumpridoEm)
+    .forEach((e) => lista.push({ tipo: 'evento', id: e.id, em: e.cumpridoEm, por: e.cumpridoPor, rotulo: e.titulo }));
+  lista.sort((x, y) => y.em.localeCompare(x.em));
+  return lista[0] || null;
+}
+async function darOkPrazo(tipo, id) {
+  const url = tipo === 'processo' ? `/api/processos/${id}/prazo-cumprido` : `/api/eventos/${id}/cumprir`;
+  await api(url, { method: 'POST', body: JSON.stringify({}) });
+  await carregarTudo();
+}
+async function desfazerOkPrazo(tipo, id) {
+  const url = tipo === 'processo' ? `/api/processos/${id}/prazo-cumprido` : `/api/eventos/${id}/cumprir`;
+  await api(url, { method: 'POST', body: JSON.stringify({ desfazer: true }) });
+  await carregarTudo();
+}
+function textoCumprido(c) {
+  const quando = new Date(c.em).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+  return `✓ Cumprido em ${quando}${c.por ? ' por ' + textoSeguro(c.por) : ''}`;
 }
 function textoPrazo(dias) {
   if (dias === null) return '';
@@ -267,14 +290,14 @@ function renderKanban() {
     if (busca && !`${p.nome || ''} ${nomeCliente(p.clienteId)} ${p.numeroProcesso || ''}`.toLocaleLowerCase('pt-BR').includes(busca)) return false;
     if (urg === 'atrasado' && !(prox && prox.dias < 0)) return false;
     if (urg === 'semana' && !(prox && prox.dias >= 0 && prox.dias <= 7)) return false;
-    if (urg === 'sem' && prox) return false;
+    if (urg === 'sem' && (prox || ultimoPrazoCumprido(p))) return false;
     return true;
   });
 
   const ativos = todos.filter(({ p }) => !STATUS_ENCERRADOS.includes(statusKanban(p)) && statusKanban(p) !== 'Concluído');
   const nAtrasados = ativos.filter(({ prox }) => prox && prox.dias < 0).length;
   const nSemana = ativos.filter(({ prox }) => prox && prox.dias >= 0 && prox.dias <= 7).length;
-  const nSem = ativos.filter(({ prox }) => !prox).length;
+  const nSem = ativos.filter(({ p, prox }) => !prox && !ultimoPrazoCumprido(p)).length;
   document.getElementById('kanban-resumo').innerHTML =
     `<span class="kb-chip kb-atrasado" onclick="filtrarKanban('atrasado')"><strong>${nAtrasados}</strong> com prazo vencido</span>` +
     `<span class="kb-chip kb-semana" onclick="filtrarKanban('semana')"><strong>${nSemana}</strong> vencem em até 7 dias</span>` +
@@ -294,13 +317,15 @@ function renderKanban() {
         ${cartoes.map(({ p, prox }) => {
           const nTarefas = state.tarefas.filter((t) => t.processoId === p.id && t.status !== 'Concluída').length;
           const cls = prox ? classeUrgencia(prox.dias) : 'sem';
+          const cump = ultimoPrazoCumprido(p);
           return `
           <div class="kanban-card urg-${cls}" draggable="true" data-id="${p.id}" onclick="abrirModalProcesso(${p.id})">
             <strong>${textoSeguro(p.nome || 'Processo #' + p.id)}</strong>
             <div class="kb-cliente">${textoSeguro(nomeCliente(p.clienteId))}</div>
             ${p.numeroProcesso ? `<div class="kb-cnj">${textoSeguro(p.numeroProcesso)}</div>` : ''}
             <div class="kb-tags">${p.area ? `<span class="kb-tag">${textoSeguro(p.area)}</span>` : ''}${p.liminarDeferida ? '<span class="kb-tag kb-tag-ok">Liminar deferida</span>' : ''}${nTarefas ? `<span class="kb-tag">${nTarefas} tarefa${nTarefas > 1 ? 's' : ''} aberta${nTarefas > 1 ? 's' : ''}</span>` : ''}</div>
-            ${statusKanban(p) === 'Concluído' ? '' : prox ? `<div class="kb-prazo kb-prazo-${cls}" title="${textoSeguro(prox.rotulo)}">📅 ${dataBr(prox.data)} · ${textoPrazo(prox.dias)}<br><small>${textoSeguro(prox.rotulo)}</small></div>` : '<div class="kb-prazo kb-prazo-sem">Sem prazo definido</div>'}
+            ${statusKanban(p) === 'Concluído' ? '' : prox ? `<div class="kb-prazo kb-prazo-${cls}" title="${textoSeguro(prox.rotulo)}">📅 ${dataBr(prox.data)} · ${textoPrazo(prox.dias)}<br><small>${textoSeguro(prox.rotulo)}</small>${prox.tipo !== 'tarefa' ? `<div onclick="event.stopPropagation()"><button class="kb-ok" onclick="darOkPrazo('${prox.tipo}', ${prox.id})">✓ Dar ok no prazo</button></div>` : ''}</div>` : (cump ? '<div class="kb-prazo kb-prazo-ok">✓ Prazos em dia</div>' : '<div class="kb-prazo kb-prazo-sem">Sem prazo definido</div>')}
+            ${statusKanban(p) !== 'Concluído' && cump ? `<div class="kb-cumprido" onclick="event.stopPropagation()">${textoCumprido(cump)} · <a href="#" onclick="desfazerOkPrazo('${cump.tipo}', ${cump.id}); return false;">desfazer</a></div>` : ''}
             <div class="kb-acoes" onclick="event.stopPropagation()">
               <select onchange="moverProcesso(${p.id}, this.value)" aria-label="Mover para"><option value="">Mover para…</option>${STATUSES.filter((s) => s !== statusKanban(p)).map((s) => `<option>${s}</option>`).join('')}</select>
               <button class="btn-secondary btn-small" onclick="abrirModalTarefa(${p.id})">+ Tarefa</button>
@@ -356,17 +381,25 @@ function renderProcessos() {
 function renderEventos() {
   const tbody = document.querySelector('#tabela-eventos tbody');
   const ordenados = [...state.eventos].sort((a, b) => new Date(a.data) - new Date(b.data));
-  tbody.innerHTML = ordenados.map((e) => `
-    <tr>
+  tbody.innerHTML = ordenados.map((e) => {
+    const ehPrazo = e.tipo === 'Prazo';
+    const ok = ehPrazo && e.cumprido;
+    const dias = e.data ? diasAte(e.data) : null;
+    const alerta = ehPrazo && !ok && dias !== null && dias < 0 ? ' <span class="badge risco-critico">vencido</span>' : '';
+    const botaoOk = ehPrazo ? (ok ? `<button class="btn-secondary btn-small" onclick="desfazerOkPrazo('evento', ${e.id})">↩ Desfazer ok</button>` : `<button class="btn-primary btn-small" onclick="darOkPrazo('evento', ${e.id})">✓ Dar ok</button>`) : '';
+    return `
+    <tr class="${ok ? 'linha-cumprida' : ''}">
       <td>${e.data ? new Date(e.data + 'T00:00:00').toLocaleDateString('pt-BR') : '—'}</td>
-      <td>${e.titulo || '—'}</td>
+      <td>${e.titulo || '—'}${ok ? `<br><small class="txt-cumprido">${textoCumprido({ em: e.cumpridoEm, por: e.cumpridoPor })}</small>` : ''}${alerta}</td>
       <td>${e.tipo || '—'}</td>
       <td>${e.processoId ? nomeProcesso(e.processoId) : '—'}</td>
       <td>
+        ${botaoOk}
         <button class="btn-icon" title="Editar" onclick="abrirModalEvento(${e.id})">✏️</button>
         <button class="btn-icon" title="Excluir" onclick="excluir('eventos', ${e.id})">🗑️</button>
       </td>
-    </tr>`).join('') || '<tr><td colspan="5">Nenhum evento cadastrado ainda.</td></tr>';
+    </tr>`;
+  }).join('') || '<tr><td colspan="5">Nenhum evento cadastrado ainda.</td></tr>';
 }
 
 function renderClientes() {
@@ -1160,6 +1193,10 @@ async function salvarProcesso(id) {
     prazo: document.getElementById('f-prazo').value,
     liminarDeferida: document.getElementById('f-liminar').checked,
   };
+  if (id) {
+    const antigo = state.processos.find((x) => x.id === id);
+    if (antigo && (antigo.prazo || '') !== body.prazo) { body.prazoCumprido = false; body.prazoCumpridoEm = null; body.prazoCumpridoPor = null; }
+  }
   if (id) await api(`/api/processos/${id}`, { method: 'PUT', body: JSON.stringify(body) });
   else await api('/api/processos', { method: 'POST', body: JSON.stringify(body) });
   fecharModal();

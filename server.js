@@ -962,6 +962,40 @@ function crud(resource) {
 
 ['clientes', 'processos', 'eventos', 'leads', 'tarefas', 'contratos', 'pagamentos', 'despesas'].forEach(crud);
 
+// "Ok" no prazo: registra quem e quando cumpriu (e permite desfazer).
+function nomeUsuarioSessao(req, db) {
+  const u = (db.usuarios || []).find((x) => x.id === req.session.userId);
+  return u ? u.nome : 'Sistema';
+}
+app.post('/api/eventos/:id/cumprir', async (req, res) => {
+  const db = await load();
+  const evento = (db.eventos || []).find((e) => e.id === Number(req.params.id));
+  if (!evento) return res.status(404).json({ erro: 'não encontrado' });
+  if (req.body && req.body.desfazer) {
+    evento.cumprido = false; evento.cumpridoEm = null; evento.cumpridoPor = null;
+    auditar(req, db, 'desfez ok do prazo', 'eventos', evento, evento.titulo || '');
+  } else {
+    evento.cumprido = true; evento.cumpridoEm = new Date().toISOString(); evento.cumpridoPor = nomeUsuarioSessao(req, db);
+    auditar(req, db, 'deu ok no prazo', 'eventos', evento, evento.titulo || '');
+  }
+  await save(db);
+  res.json(evento);
+});
+app.post('/api/processos/:id/prazo-cumprido', async (req, res) => {
+  const db = await load();
+  const processo = (db.processos || []).find((p) => p.id === Number(req.params.id));
+  if (!processo) return res.status(404).json({ erro: 'não encontrado' });
+  if (req.body && req.body.desfazer) {
+    processo.prazoCumprido = false; processo.prazoCumpridoEm = null; processo.prazoCumpridoPor = null;
+    auditar(req, db, 'desfez ok do prazo', 'processos', processo, processo.nome || '');
+  } else {
+    processo.prazoCumprido = true; processo.prazoCumpridoEm = new Date().toISOString(); processo.prazoCumpridoPor = nomeUsuarioSessao(req, db);
+    auditar(req, db, 'deu ok no prazo', 'processos', processo, processo.nome || '');
+  }
+  await save(db);
+  res.json(processo);
+});
+
 // Marca uma conta a pagar como paga. Se for gasto fixo, já deixa a do mês seguinte pendente.
 app.post('/api/despesas/:id/pagar', async (req, res) => {
   const db = await load();
@@ -1321,7 +1355,7 @@ app.get('/api/dashboard', async (req, res) => {
   const daqui7dias = new Date();
   daqui7dias.setDate(hoje.getDate() + 7);
   const prazosSemana = db.eventos.filter((e) => {
-    if (!e.data) return false;
+    if (!e.data || e.cumprido) return false;
     const dataEvento = new Date(e.data + 'T00:00:00');
     return dataEvento >= new Date(hoje.toDateString()) && dataEvento <= daqui7dias;
   }).length;

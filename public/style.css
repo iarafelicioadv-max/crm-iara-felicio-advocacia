@@ -345,3 +345,11 @@ h3 { font-family: 'Playfair Display', serif; font-size: 18px; margin: 0 0 16px; 
 .kb-acoes { display: flex; gap: 6px; margin-top: 8px; }
 .kb-acoes select { flex: 1; min-width: 0; padding: 4px 6px; font-size: 12px; border: 1px solid var(--border); border-radius: 6px; background: #fff; }
 .badge.status-Finalizado { background: #e6f4ea; color: #227a3d; }
+
+.kb-ok { margin-top: 6px; background: #227a3d; color: #fff; border: none; border-radius: 6px; padding: 4px 10px; font-size: 12px; cursor: pointer; }
+.kb-ok:hover { background: #1b6232; }
+.kb-cumprido { font-size: 11px; color: #227a3d; margin-top: 4px; }
+.kb-cumprido a { color: #6b5b52; }
+.linha-cumprida td { opacity: .65; }
+.linha-cumprida td:nth-child(2) strong, .linha-cumprida td:nth-child(2) { text-decoration: none; }
+.txt-cumprido { color: #227a3d; }
