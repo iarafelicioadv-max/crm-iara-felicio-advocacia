@@ -379,27 +379,7 @@ function renderProcessos() {
 }
 
 function renderEventos() {
-  const tbody = document.querySelector('#tabela-eventos tbody');
-  const ordenados = [...state.eventos].sort((a, b) => new Date(a.data) - new Date(b.data));
-  tbody.innerHTML = ordenados.map((e) => {
-    const ehPrazo = e.tipo === 'Prazo';
-    const ok = ehPrazo && e.cumprido;
-    const dias = e.data ? diasAte(e.data) : null;
-    const alerta = ehPrazo && !ok && dias !== null && dias < 0 ? ' <span class="badge risco-critico">vencido</span>' : '';
-    const botaoOk = ehPrazo ? (ok ? `<button class="btn-secondary btn-small" onclick="desfazerOkPrazo('evento', ${e.id})">↩ Desfazer ok</button>` : `<button class="btn-primary btn-small" onclick="darOkPrazo('evento', ${e.id})">✓ Dar ok</button>`) : '';
-    return `
-    <tr class="${ok ? 'linha-cumprida' : ''}">
-      <td>${e.data ? new Date(e.data + 'T00:00:00').toLocaleDateString('pt-BR') : '—'}</td>
-      <td>${e.titulo || '—'}${ok ? `<br><small class="txt-cumprido">${textoCumprido({ em: e.cumpridoEm, por: e.cumpridoPor })}</small>` : ''}${alerta}</td>
-      <td>${e.tipo || '—'}</td>
-      <td>${e.processoId ? nomeProcesso(e.processoId) : '—'}</td>
-      <td>
-        ${botaoOk}
-        <button class="btn-icon" title="Editar" onclick="abrirModalEvento(${e.id})">✏️</button>
-        <button class="btn-icon" title="Excluir" onclick="excluir('eventos', ${e.id})">🗑️</button>
-      </td>
-    </tr>`;
-  }).join('') || '<tr><td colspan="5">Nenhum evento cadastrado ainda.</td></tr>';
+  if (typeof renderCalendario === 'function') renderCalendario();
 }
 
 function renderClientes() {
@@ -1203,12 +1183,13 @@ async function salvarProcesso(id) {
   await carregarTudo();
 }
 
-function abrirModalEvento(id) {
-  const e = id ? state.eventos.find((x) => x.id === id) : {};
+function abrirModalEvento(id, dataPadrao, horaPadrao) {
+  const e = id ? state.eventos.find((x) => x.id === id) : { data: dataPadrao || '', hora: horaPadrao || '' };
   modalBox.innerHTML = `
     <h3>${id ? 'Editar' : 'Novo'} Evento</h3>
     <label>Título</label><input id="f-titulo" value="${e.titulo || ''}" />
     <label>Data</label><input type="date" id="f-data" value="${e.data || ''}" />
+    <label>Hora (opcional)</label><input type="time" id="f-hora" value="${(e.hora || '').slice(0, 5)}" />
     <label>Tipo</label><select id="f-tipo">${opcoesLista(TIPOS_EVENTO, e.tipo)}</select>
     <label>Processo vinculado</label><select id="f-processo">${opcoesProcessos(e.processoId)}</select>
     <label>Observações</label><textarea id="f-obs" rows="3">${e.observacoes || ''}</textarea>
@@ -1223,6 +1204,7 @@ async function salvarEvento(id) {
   const body = {
     titulo: document.getElementById('f-titulo').value,
     data: document.getElementById('f-data').value,
+    hora: document.getElementById('f-hora').value || null,
     tipo: document.getElementById('f-tipo').value,
     processoId: Number(document.getElementById('f-processo').value) || null,
     observacoes: document.getElementById('f-obs').value,

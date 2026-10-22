@@ -106,13 +106,22 @@
     <!-- CALENDARIO -->
     <section id="view-calendario" class="view">
       <div class="view-header">
-        <h2>Calendário</h2>
-        <button class="btn-primary" onclick="abrirModalEvento()">+ Novo Evento</button>
+        <div class="cal-topo">
+          <h2>Calendário</h2>
+          <button class="btn-secondary" onclick="calHojeBtn()">Hoje</button>
+          <span id="cal-nav"><button class="cal-seta" onclick="calMover(-1)" aria-label="Anterior">‹</button><button class="cal-seta" onclick="calMover(1)" aria-label="Próximo">›</button></span>
+          <strong id="cal-titulo" class="cal-titulo"></strong>
+        </div>
+        <div class="cal-direita">
+          <div class="cal-modos"><button data-modo="mes" onclick="calModo('mes')">Mês</button><button data-modo="semana" onclick="calModo('semana')">Semana</button><button data-modo="dia" onclick="calModo('dia')">Dia</button><button data-modo="agenda" onclick="calModo('agenda')">Agenda</button><button data-modo="google" onclick="calModo('google')">Google</button></div>
+          <a class="btn-secondary" style="text-decoration:none" target="_blank" rel="noopener" href="https://calendar.google.com/calendar/u/0/r">Abrir Google Agenda ↗</a>
+          <button class="btn-primary" onclick="abrirModalEvento()">+ Novo evento</button>
+        </div>
       </div>
-      <table class="table" id="tabela-eventos">
-        <thead><tr><th>Data</th><th>Título</th><th>Tipo</th><th>Processo</th><th>Ações</th></tr></thead>
-        <tbody></tbody>
-      </table>
+      <div class="cal-layout" id="cal-raiz">
+        <aside class="cal-lateral"><div class="cal-lateral-tit">Minhas agendas</div><div id="cal-filtros"></div><p class="cal-dica">Clique em um dia para criar um evento. Clique em um compromisso para ver os detalhes.</p></aside>
+        <div class="cal-corpo" id="cal-corpo"></div>
+      </div>
     </section>
 
     <!-- CLIENTES -->
@@ -204,6 +213,7 @@
 </div>
 
   <script src="app.js?v=20260818-conciliacao-financeira"></script>
+  <script src="calendario.js?v=20261022-agenda"></script>
   <script src="ui-enhancements.js?v=20260820-modernizacao-fase-1"></script>
 </body>
 </html>
